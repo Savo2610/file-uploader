@@ -1,0 +1,543 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Dateien senden</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+  <script src="https://www.google.com/recaptcha/api.js?render=6Lck_4ssAAAAACIGhG9qR55FXLOJr2UwzRrPeEh1"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f0e0c;
+      --surface: #1a1916;
+      --border: #2e2c28;
+      --gold: #c9a84c;
+      --gold-light: #e2c472;
+      --text: #f0ece3;
+      --muted: #7a7568;
+      --success: #5a9e6f;
+      --error: #c0554a;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Sans', sans-serif;
+      font-weight: 300;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      overflow-x: hidden;
+    }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+      pointer-events: none;
+      z-index: 0;
+      opacity: 0.5;
+    }
+
+    .container {
+      position: relative;
+      z-index: 1;
+      width: 100%;
+      max-width: 560px;
+    }
+
+    header {
+      text-align: center;
+      margin-bottom: 3rem;
+      animation: fadeUp 0.8s ease both;
+    }
+
+    .eyebrow {
+      font-size: 0.7rem;
+      letter-spacing: 0.25em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-bottom: 1rem;
+    }
+
+    h1 {
+      font-family: 'DM Serif Display', serif;
+      font-size: clamp(2rem, 5vw, 3rem);
+      line-height: 1.1;
+      color: var(--text);
+      margin-bottom: 0.75rem;
+    }
+
+    h1 em { font-style: italic; color: var(--gold-light); }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 0.88rem;
+      line-height: 1.7;
+    }
+
+    /* Dropzone */
+    .dropzone {
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      background: var(--surface);
+      padding: 2.5rem 2rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      position: relative;
+      animation: fadeUp 0.8s 0.15s ease both;
+    }
+
+    .dropzone:hover, .dropzone.dragover {
+      border-color: var(--gold);
+      background: #1f1d19;
+    }
+
+    .dropzone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+
+    .drop-icon { width: 44px; height: 44px; margin: 0 auto 1.1rem; opacity: 0.35; }
+    .drop-label { font-size: 0.93rem; color: var(--muted); line-height: 1.6; }
+    .drop-label strong { color: var(--gold); font-weight: 500; }
+    .drop-hint { font-size: 0.72rem; color: var(--muted); margin-top: 0.45rem; opacity: 0.55; }
+
+    /* Preview grid */
+    #preview-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
+      gap: 0.5rem;
+      margin-top: 1rem;
+    }
+
+    .preview-wrap { display: flex; flex-direction: column; }
+
+    .preview-thumb {
+      aspect-ratio: 1;
+      border-radius: 1px;
+      overflow: hidden;
+      position: relative;
+      background: var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.6rem;
+    }
+
+    .preview-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+    .remove-btn {
+      position: absolute;
+      top: 3px; right: 3px;
+      background: rgba(0,0,0,0.72);
+      border: none; color: white;
+      width: 18px; height: 18px;
+      border-radius: 50%; font-size: 10px;
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+    }
+
+    .file-name-tag {
+      font-size: 0.58rem; color: var(--muted);
+      text-align: center; padding: 3px 4px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+
+    /* Progress */
+    #progress-area { margin-top: 1.25rem; display: none; }
+
+    .progress-file {
+      display: flex; align-items: center; gap: 0.75rem;
+      padding: 0.6rem 0;
+      border-bottom: 1px solid var(--border);
+    }
+    .progress-file:last-child { border-bottom: none; }
+    .progress-file-name { flex: 1; font-size: 0.8rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .progress-status { font-size: 0.74rem; min-width: 70px; text-align: right; }
+    .status-uploading { color: var(--gold); }
+    .status-done { color: var(--success); }
+    .status-error { color: var(--error); }
+    .progress-bar-wrap { width: 100%; height: 2px; background: var(--border); border-radius: 1px; margin-top: 2px; }
+    .progress-bar-fill { height: 100%; background: var(--gold); border-radius: 1px; width: 0%; transition: width 0.3s; }
+
+    /* Upload button */
+    button.upload-btn {
+      width: 100%; margin-top: 1.5rem; padding: 1rem;
+      background: var(--gold); color: #0f0e0c;
+      border: none; border-radius: 1px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 0.85rem; font-weight: 500;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      cursor: pointer;
+      transition: background 0.2s, opacity 0.2s;
+      animation: fadeUp 0.8s 0.3s ease both;
+    }
+    button.upload-btn:hover { background: var(--gold-light); }
+    button.upload-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+
+
+    /* Password area */
+    .pw-area { margin-top: 1.1rem; animation: fadeUp 0.8s 0.38s ease both; }
+
+    .pw-toggle {
+      background: none;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 0.77rem; letter-spacing: 0.07em;
+      padding: 0.55rem 1rem; border-radius: 1px;
+      cursor: pointer; width: 100%;
+      display: flex; align-items: center; justify-content: center; gap: 0.45rem;
+      transition: border-color 0.2s, color 0.2s;
+    }
+    .pw-toggle:hover { border-color: var(--gold); color: var(--gold); }
+    .pw-toggle svg { width: 12px; height: 12px; flex-shrink: 0; }
+
+    .pw-form { display: none; margin-top: 0.65rem; gap: 0.5rem; align-items: stretch; }
+    .pw-form.open { display: flex; }
+
+    .pw-input {
+      flex: 1; background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 0.85rem; padding: 0.65rem 0.85rem;
+      border-radius: 1px; outline: none;
+      transition: border-color 0.2s;
+    }
+    .pw-input:focus { border-color: var(--gold); }
+    .pw-input::placeholder { color: var(--muted); opacity: 0.45; }
+    .pw-input.shake { animation: shake 0.35s ease; border-color: var(--error) !important; }
+
+    .pw-submit {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--gold);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 0.77rem; letter-spacing: 0.07em;
+      padding: 0.65rem 1.1rem; border-radius: 1px;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      white-space: nowrap;
+    }
+    .pw-submit:hover { border-color: var(--gold); background: #1f1d19; }
+    .pw-submit:disabled { opacity: 0.4; cursor: not-allowed; }
+
+    .pw-badge {
+      display: none; align-items: center; justify-content: center; gap: 0.4rem;
+      margin-top: 0.65rem; padding: 0.5rem 1rem;
+      border: 1px solid var(--success); border-radius: 1px;
+      color: var(--success); font-size: 0.77rem; letter-spacing: 0.06em;
+      animation: fadeUp 0.3s ease both;
+    }
+    .pw-badge.visible { display: flex; }
+
+    .limit-info { margin-top: 0.55rem; text-align: center; font-size: 0.71rem; color: var(--muted); opacity: 0.65; }
+    .limit-info span { color: var(--gold); font-weight: 500; }
+    .limit-info span.unlocked { color: var(--success); }
+
+    /* Toast */
+    #toast {
+      position: fixed; bottom: 2rem; left: 50%;
+      transform: translateX(-50%) translateY(16px);
+      background: var(--surface); border: 1px solid var(--border);
+      padding: 0.7rem 1.4rem; border-radius: 2px;
+      font-size: 0.83rem; opacity: 0;
+      transition: opacity 0.25s, transform 0.25s;
+      pointer-events: none; z-index: 100; white-space: nowrap;
+    }
+    #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    #toast.success { border-color: var(--success); color: var(--success); }
+    #toast.error { border-color: var(--error); color: var(--error); }
+
+    footer {
+      margin-top: 3rem; text-align: center;
+      font-size: 0.68rem; color: var(--muted); opacity: 0.45;
+      animation: fadeUp 0.8s 0.5s ease both;
+    }
+
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(14px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes shake {
+      0%,100% { transform: translateX(0); }
+      25%      { transform: translateX(-6px); }
+      75%      { transform: translateX(6px); }
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <p class="eyebrow">Dateiübertragung</p>
+    <h1>Dateien <em>senden</em></h1>
+    <p class="subtitle">Hier kannst du mir Dateien, Fotos, Videos oder Dokumente<br>direkt zukommen lassen.</p>
+  </header>
+
+  <div class="dropzone" id="dropzone">
+    <input type="file" id="file-input" multiple />
+    <svg class="drop-icon" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M24 4L24 32M24 4L16 12M24 4L32 12" stroke="#c9a84c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M8 36V40C8 41.1 8.9 42 10 42H38C39.1 42 40 41.1 40 40V36" stroke="#c9a84c" stroke-width="1.5" stroke-linecap="round"/>
+    </svg>
+    <p class="drop-label"><strong>Dateien auswählen</strong> oder hierher ziehen</p>
+    <p class="drop-hint" id="drop-hint">Alle Dateitypen · Max. 100 MB pro Datei</p>
+  </div>
+
+  <div id="preview-grid"></div>
+  <div id="progress-area"></div>
+
+
+    <button class="upload-btn" id="upload-btn" disabled>Senden</button>
+
+  <div class="pw-area">
+    <button class="pw-toggle" id="pw-toggle" onclick="togglePwForm()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="11" width="18" height="11" rx="2"/>
+        <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+      </svg>
+      Größeres Limit freischalten (bis 10 GB)
+    </button>
+    <div class="pw-form" id="pw-form">
+      <input class="pw-input" type="password" id="pw-input" placeholder="Passwort eingeben…"
+             onkeydown="if(event.key==='Enter') checkPassword()" />
+      <button class="pw-submit" id="pw-submit" onclick="checkPassword()">Freischalten</button>
+    </div>
+    <div class="pw-badge" id="pw-badge">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+      10 GB Limit aktiv
+    </div>
+    <p class="limit-info">Aktuelles Limit: <span id="limit-display">100 MB</span> pro Datei</p>
+  </div>
+
+  <footer>Dateien werden verschlüsselt übertragen und sicher gespeichert.<br>Diese Seite ist durch reCAPTCHA geschützt (<a href="https://policies.google.com/privacy" style="color:inherit;opacity:0.7">Datenschutz</a> · <a href="https://policies.google.com/terms" style="color:inherit;opacity:0.7">AGB</a>).</footer>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  // ════════════════════════════════════════════
+  //  KONFIGURATION – nur diese Zeile anpassen
+  // ════════════════════════════════════════════
+  const APPS_SCRIPT_URL    = 'https://script.google.com/macros/s/AKfycbyRcsB6IoiddMO0G-cthdlCm9ZGs4mxI-1JH6mOHOy5vZ0RtSvzEVUhBh5rrDj0eGWt/exec';
+  const RECAPTCHA_SITE_KEY = '6Lck_4ssAAAAACIGhG9qR55FXLOJr2UwzRrPeEh1'; // reCAPTCHA v3 Site Key
+
+  const LIMIT_NORMAL_MB   = 100;
+  const LIMIT_UNLOCKED_MB = 10 * 1024; // 10 GB in MB
+  // ════════════════════════════════════════════
+
+  let maxFileSizeMB  = LIMIT_NORMAL_MB;
+  let selectedFiles  = [];
+
+  const dropzone     = document.getElementById('dropzone');
+  const fileInput    = document.getElementById('file-input');
+  const previewGrid  = document.getElementById('preview-grid');
+  const progressArea = document.getElementById('progress-area');
+  const uploadBtn    = document.getElementById('upload-btn');
+  const toast        = document.getElementById('toast');
+
+  // Drag & Drop
+  dropzone.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('dragover'); });
+  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+  dropzone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropzone.classList.remove('dragover');
+    addFiles([...e.dataTransfer.files]);
+  });
+  fileInput.addEventListener('change', () => addFiles([...fileInput.files]));
+
+  // ── Passwort – wird serverseitig geprüft ────
+  function togglePwForm() {
+    const form = document.getElementById('pw-form');
+    form.classList.toggle('open');
+    if (form.classList.contains('open')) document.getElementById('pw-input').focus();
+  }
+
+  async function checkPassword() {
+    const pwInput  = document.getElementById('pw-input');
+    const pwSubmit = document.getElementById('pw-submit');
+    const password = pwInput.value.trim();
+    if (!password) return;
+
+    pwSubmit.disabled = true;
+    pwSubmit.textContent = '…';
+
+    try {
+      // Das Passwort wird ans Backend geschickt und dort verglichen –
+      // es steht nirgends im Frontend-Code.
+      const res  = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'verifyPassword', password })
+      });
+      const data = await res.json();
+
+      if (data.status === 'ok' && data.unlocked) {
+        maxFileSizeMB = LIMIT_UNLOCKED_MB;
+        document.getElementById('pw-form').classList.remove('open');
+        document.getElementById('pw-toggle').style.display = 'none';
+        document.getElementById('pw-badge').classList.add('visible');
+        const lim = document.getElementById('limit-display');
+        lim.textContent = '10 GB';
+        lim.classList.add('unlocked');
+        document.getElementById('drop-hint').textContent = 'Alle Dateitypen · Max. 10 GB pro Datei';
+        showToast('10 GB Limit freigeschaltet!', 'success');
+      } else {
+        pwInput.value = '';
+        pwInput.classList.add('shake');
+        setTimeout(() => pwInput.classList.remove('shake'), 400);
+        showToast('Falsches Passwort', 'error');
+      }
+    } catch {
+      showToast('Verbindungsfehler – bitte erneut versuchen', 'error');
+    } finally {
+      pwSubmit.disabled = false;
+      pwSubmit.textContent = 'Freischalten';
+    }
+  }
+
+  // ── Dateien hinzufügen ───────────────────────
+  function addFiles(newFiles) {
+    const tooBig = [];
+    newFiles.forEach(f => {
+      if (f.size / (1024 * 1024) > maxFileSizeMB) { tooBig.push(f.name); return; }
+      if (!selectedFiles.find(x => x.name === f.name && x.size === f.size)) selectedFiles.push(f);
+    });
+    if (tooBig.length) {
+      const lim = maxFileSizeMB >= 1024 ? (maxFileSizeMB / 1024) + ' GB' : maxFileSizeMB + ' MB';
+      showToast(`Zu groß (max. ${lim}): ${tooBig.slice(0, 2).join(', ')}${tooBig.length > 2 ? ` +${tooBig.length - 2}` : ''}`, 'error');
+    }
+    renderPreviews();
+    uploadBtn.disabled = selectedFiles.length === 0;
+  }
+
+  function fileIcon(f) {
+    if (f.type.startsWith('image/')) return null;
+    if (f.type.startsWith('video/')) return '🎬';
+    if (f.type.startsWith('audio/')) return '🎵';
+    if (f.type.includes('pdf'))      return '📄';
+    if (/zip|rar|7z|tar/.test(f.type)) return '🗜️';
+    if (f.type.includes('word') || f.name.endsWith('.docx')) return '📝';
+    if (f.type.includes('sheet') || f.name.endsWith('.xlsx')) return '📊';
+    return '📁';
+  }
+
+  function renderPreviews() {
+    previewGrid.innerHTML = '';
+    selectedFiles.forEach((file, i) => {
+      const wrap  = document.createElement('div');
+      wrap.className = 'preview-wrap';
+      const thumb = document.createElement('div');
+      thumb.className = 'preview-thumb';
+      const icon = fileIcon(file);
+      if (!icon) {
+        const img = document.createElement('img');
+        img.src = URL.createObjectURL(file);
+        thumb.appendChild(img);
+      } else {
+        thumb.textContent = icon;
+      }
+      const btn = document.createElement('button');
+      btn.className = 'remove-btn';
+      btn.textContent = '×';
+      btn.onclick = () => { selectedFiles.splice(i, 1); renderPreviews(); uploadBtn.disabled = !selectedFiles.length; };
+      thumb.appendChild(btn);
+      const label = document.createElement('div');
+      label.className = 'file-name-tag';
+      label.textContent = file.name;
+      wrap.appendChild(thumb);
+      wrap.appendChild(label);
+      previewGrid.appendChild(wrap);
+    });
+  }
+
+  // ── Upload ───────────────────────────────────
+  uploadBtn.addEventListener('click', async () => {
+    if (!selectedFiles.length) return;
+    if (APPS_SCRIPT_URL === 'DEINE_APPS_SCRIPT_URL_HIER') {
+      showToast('Bitte zuerst die Apps Script URL eintragen', 'error'); return;
+    }
+    uploadBtn.disabled = true;
+    uploadBtn.textContent = 'Wird geprüft…';
+    let tokenForUpload;
+    try {
+      tokenForUpload = await getCaptchaToken();
+    } catch (err) {
+      showToast('reCAPTCHA Fehler – bitte Seite neu laden', 'error');
+      uploadBtn.disabled = false;
+      uploadBtn.textContent = 'Senden';
+      return;
+    }
+    progressArea.style.display = 'block';
+    progressArea.innerHTML = '';
+    let allOk = true;
+    for (const file of selectedFiles) { if (!(await uploadFile(file, tokenForUpload))) allOk = false; }
+    selectedFiles = []; previewGrid.innerHTML = ''; fileInput.value = ''; uploadBtn.disabled = true;
+    uploadBtn.textContent = 'Senden';
+    showToast(allOk ? 'Alle Dateien erfolgreich gesendet!' : 'Einige Dateien konnten nicht gesendet werden', allOk ? 'success' : 'error');
+  });
+
+  async function uploadFile(file, captchaToken) {
+    const id = 'f' + Math.random().toString(36).slice(2);
+    const row = document.createElement('div');
+    row.className = 'progress-file';
+    row.innerHTML = `<div style="flex:1">
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <span class="progress-file-name">${file.name}</span>
+        <span class="progress-status status-uploading" id="st-${id}">Wird gesendet…</span>
+      </div>
+      <div class="progress-bar-wrap"><div class="progress-bar-fill" id="bar-${id}"></div></div>
+    </div>`;
+    progressArea.appendChild(row);
+    const stEl  = document.getElementById(`st-${id}`);
+    const barEl = document.getElementById(`bar-${id}`);
+    try {
+      const base64 = await toBase64(file, barEl);
+      const res = await fetch(APPS_SCRIPT_URL, {
+        method: 'POST',
+        body: JSON.stringify({ action: 'upload', fileName: file.name, mimeType: file.type || 'application/octet-stream', data: base64, captchaToken })
+      });
+      const result = await res.json();
+      if (result.status === 'ok') {
+        stEl.textContent = '✓ Gesendet'; stEl.className = 'progress-status status-done';
+        barEl.style.width = '100%'; barEl.style.background = 'var(--success)';
+        return true;
+      } else { throw new Error(result.message); }
+    } catch (err) {
+      stEl.textContent = '✗ Fehler'; stEl.className = 'progress-status status-error';
+      console.error(err); return false;
+    }
+  }
+
+  function toBase64(file, barEl) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onprogress = e => { if (e.lengthComputable && barEl) barEl.style.width = Math.round((e.loaded / e.total) * 85) + '%'; };
+      reader.onload    = () => { if (barEl) barEl.style.width = '90%'; resolve(reader.result.split(',')[1]); };
+      reader.onerror   = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function showToast(msg, type = '') {
+    toast.textContent = msg; toast.className = `show ${type}`;
+    setTimeout(() => { toast.className = ''; }, 3500);
+  }
+</script>
+</body>
+</html>
