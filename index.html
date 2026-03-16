@@ -6,7 +6,6 @@
   <title>Dateien senden</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
-  <script src="https://www.google.com/recaptcha/api.js?render=6Lf1Z4wsAAAAAJz1MEECvb5WMDxSFeL3n9GbmeOU"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -326,7 +325,7 @@
     <p class="limit-info">Aktuelles Limit: <span id="limit-display">100 MB</span> pro Datei</p>
   </div>
 
-  <footer>Dateien werden verschlüsselt übertragen und sicher gespeichert.<br>Diese Seite ist durch reCAPTCHA geschützt (<a href="https://policies.google.com/privacy" style="color:inherit;opacity:0.7">Datenschutz</a> · <a href="https://policies.google.com/terms" style="color:inherit;opacity:0.7">AGB</a>).</footer>
+  <footer>Dateien werden verschlüsselt übertragen und sicher gespeichert.</footer>
 </div>
 
 <div id="toast"></div>
@@ -335,8 +334,7 @@
   // ════════════════════════════════════════════
   //  KONFIGURATION – nur diese Zeile anpassen
   // ════════════════════════════════════════════
-  const APPS_SCRIPT_URL    = 'https://script.google.com/macros/s/AKfycbyRcsB6IoiddMO0G-cthdlCm9ZGs4mxI-1JH6mOHOy5vZ0RtSvzEVUhBh5rrDj0eGWt/exec';
-  const RECAPTCHA_SITE_KEY = '6Lf1Z4wsAAAAAJz1MEECvb5WMDxSFeL3n9GbmeOU'; // reCAPTCHA v3 Site Key
+  const APPS_SCRIPT_URL    = 'DEINE_APPS_SCRIPT_URL_HIER';
 
   const LIMIT_NORMAL_MB   = 100;
   const LIMIT_UNLOCKED_MB = 10 * 1024; // 10 GB in MB
@@ -473,26 +471,16 @@
       showToast('Bitte zuerst die Apps Script URL eintragen', 'error'); return;
     }
     uploadBtn.disabled = true;
-    uploadBtn.textContent = 'Wird geprüft…';
-    let tokenForUpload;
-    try {
-      tokenForUpload = await getCaptchaToken();
-    } catch (err) {
-      showToast('reCAPTCHA Fehler – bitte Seite neu laden', 'error');
-      uploadBtn.disabled = false;
-      uploadBtn.textContent = 'Senden';
-      return;
-    }
     progressArea.style.display = 'block';
     progressArea.innerHTML = '';
     let allOk = true;
-    for (const file of selectedFiles) { if (!(await uploadFile(file, tokenForUpload))) allOk = false; }
+    for (const file of selectedFiles) { if (!(await uploadFile(file))) allOk = false; }
     selectedFiles = []; previewGrid.innerHTML = ''; fileInput.value = ''; uploadBtn.disabled = true;
     uploadBtn.textContent = 'Senden';
     showToast(allOk ? 'Alle Dateien erfolgreich gesendet!' : 'Einige Dateien konnten nicht gesendet werden', allOk ? 'success' : 'error');
   });
 
-  async function uploadFile(file, captchaToken) {
+  async function uploadFile(file) {
     const id = 'f' + Math.random().toString(36).slice(2);
     const row = document.createElement('div');
     row.className = 'progress-file';
@@ -510,7 +498,7 @@
       const base64 = await toBase64(file, barEl);
       const res = await fetch(APPS_SCRIPT_URL, {
         method: 'POST',
-        body: JSON.stringify({ action: 'upload', fileName: file.name, mimeType: file.type || 'application/octet-stream', data: base64, captchaToken })
+        body: JSON.stringify({ action: 'upload', fileName: file.name, mimeType: file.type || 'application/octet-stream', data: base64 })
       });
       const result = await res.json();
       if (result.status === 'ok') {
