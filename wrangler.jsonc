@@ -7,12 +7,21 @@
   "main": "src/index.js",
   "compatibility_date": "2026-08-04",
 
-  // Die Seite selbst liegt in public/. Alles, was dort keine Datei ist,
-  // landet im Worker – also die /api/-Routen.
-  "assets": { "directory": "./public" },
+  // run_worker_first, weil unter den zwei Hostnamen unterschiedliche Seiten
+  // ausgeliefert werden: sonst würde Cloudflare public/index.html beantworten,
+  // bevor der Worker überhaupt gefragt wird.
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
 
+  // Zwei getrennte Adressen, ein Worker:
+  //   upload.veerka.mp   – öffentlich, nur Hochladen
+  //   download.veerka.mp – nur mit 2FA-Code, zum Abholen
   "routes": [
-    { "pattern": "upload.veerka.mp", "custom_domain": true }
+    { "pattern": "upload.veerka.mp", "custom_domain": true },
+    { "pattern": "download.veerka.mp", "custom_domain": true }
   ],
 
   // Hier landen die hochgeladenen Dateien. Der Bucket ist nicht öffentlich

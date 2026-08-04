@@ -244,6 +244,11 @@ async function handleUnlock(request, env) {
 
   // Ein Code gilt 30 Sekunden und würde in diesem Fenster mehrfach
   // funktionieren. Der Primärschlüssel lässt das genau einmal zu.
+  //
+  // Das zählt bewusst NICHT als Fehlversuch: der Code war ja richtig. Wer
+  // zweimal auf „Öffnen“ tippt oder die Seite neu lädt, landet hier – das
+  // gegen die Brute-Force-Sperre zu rechnen würde einen aussperren, der alles
+  // richtig gemacht hat. Gegen Durchprobieren hilft es ohnehin nicht.
   const used = `${match.counter}`;
   try {
     await env.DB
@@ -251,7 +256,6 @@ async function handleUnlock(request, env) {
       .bind(used, now + 2 * 60 * 1000)
       .run();
   } catch {
-    await env.DB.prepare('INSERT INTO auth_attempts (ip, ok, at) VALUES (?, 0, ?)').bind(ip, now).run();
     return fail(401, 'Dieser Code wurde bereits benutzt. Bitte den nächsten abwarten.');
   }
 
@@ -525,16 +529,58 @@ async function purgeOld(env) {
 
 // ── Verteiler ───────────────────────────────────────────────────────────────
 
+// Welche Route unter welchem Hostnamen überhaupt existiert. Die Trennung ist
+// nicht nur Kosmetik: unter upload.veerka.mp gibt es schlicht keinen Weg, an
+// abgelegte Dateien zu kommen – auch nicht mit gültigem Sitzungstoken.
+const ROUTES_UPLOAD = new Set([
+  '/api/status', '/api/unlock', '/api/note',
+  '/api/upload/init', '/api/upload/part', '/api/upload/complete', '/api/upload/abort',
+]);
+
+const ROUTES_DOWNLOAD = new Set([
+  '/api/status', '/api/unlock', '/api/files', '/api/files/download', '/api/notes',
+]);
+
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const path = url.pathname;
 
+    // Bewusst der Host-Header und nicht url.hostname: in Produktion ist beides
+    // dasselbe – Cloudflare baut request.url aus genau diesem Header und routet
+    // die Anfrage danach überhaupt erst hierher. Im lokalen wrangler dev steht
+    // in request.url dagegen immer „localhost“, womit sich die Trennung der
+    // beiden Adressen gar nicht testen ließe.
+    const host = (request.headers.get('Host') || url.hostname).split(':')[0];
+    const isDownloadSite = host.split('.')[0] === 'download';
+
+    // Statische Dateien. Weil beide Adressen auf denselben Worker zeigen,
+    // muss hier entschieden werden, welche Seite die richtige ist.
+    //
+    // Achtung beim Ändern: Cloudflare beantwortet „/download.html“ mit einer
+    // Weiterleitung auf „/download“. Intern wird deshalb der endungslose Pfad
+    // angefragt, sonst bekäme der Browser ein 307 statt der Seite.
     if (!path.startsWith('/api/')) {
-      // Sollte nicht vorkommen – statische Dateien beantwortet Cloudflare
-      // bereits vor dem Worker.
-      return new Response('Nicht gefunden', { status: 404 });
+      const geteilt = path === '/style.css' || path.startsWith('/favicon');
+
+      if (isDownloadSite) {
+        // Unter der Abhol-Adresse gibt es nur diese eine Seite. Jeder andere
+        // Pfad landet ebenfalls dort, statt versehentlich die Upload-Seite zu
+        // zeigen.
+        const assetPath = geteilt ? path : '/download';
+        return env.ASSETS.fetch(new Request(new URL(assetPath, url), request));
+      }
+
+      // Umgekehrt darf die Abhol-Seite unter der öffentlichen Adresse gar
+      // nicht auftauchen.
+      if (path === '/download' || path.startsWith('/download.')) {
+        return new Response('Nicht gefunden', { status: 404 });
+      }
+      return env.ASSETS.fetch(request);
     }
+
+    const erlaubt = isDownloadSite ? ROUTES_DOWNLOAD : ROUTES_UPLOAD;
+    if (!erlaubt.has(path)) return fail(404, 'Unbekannte Route.');
 
     const post = request.method === 'POST';
     const del  = request.method === 'DELETE';

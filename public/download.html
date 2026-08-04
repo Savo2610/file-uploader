@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Dateien abholen</title>
+  <meta name="theme-color" content="#0f0e0c">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%93%A5%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+  <style>
+    /* Vor dem Freischalten ist hier nichts als das Codefeld. */
+    .gate { animation: fadeUp 0.8s 0.15s ease both; }
+    .gate .pw-form { display: flex; margin-top: 0; }
+    .gate-hint { text-align: center; font-size: 0.75rem; color: var(--muted); opacity: 0.6; margin-top: 0.8rem; }
+    #inhalt { display: none; }
+    #inhalt.visible { display: block; }
+    .files { display: block; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <p class="eyebrow">Privater Bereich</p>
+    <h1>Dateien <em>abholen</em></h1>
+    <p class="subtitle" id="untertitel">Code aus der Authenticator-App eingeben.</p>
+  </header>
+
+  <div class="gate" id="gate">
+    <div class="pw-form open">
+      <input class="pw-input code-input" id="code-input" type="text" inputmode="numeric"
+             autocomplete="one-time-code" maxlength="6" placeholder="000000"
+             aria-label="Sechsstelliger Code aus der Authenticator-App" />
+      <button class="pw-submit" id="code-submit" type="button">Öffnen</button>
+    </div>
+    <p class="gate-hint" id="gate-hint">Hochladen geht auf upload.veerka.mp.</p>
+  </div>
+
+  <div id="inhalt">
+    <section class="files">
+      <h2>Texte &amp; Links</h2>
+      <div id="notes-list"></div>
+    </section>
+
+    <section class="files">
+      <h2>Dateien</h2>
+      <div id="files-list"></div>
+    </section>
+  </div>
+
+  <footer id="footer"></footer>
+</div>
+
+<div id="toast"></div>
+
+<script>
+  // Das Token hält nur, solange der Tab offen ist – danach wieder ein Code.
+  let session = sessionStorage.getItem('download-session') || null;
+  let limits  = null;
+
+  const toast      = document.getElementById('toast');
+  const codeInput  = document.getElementById('code-input');
+  const codeSubmit = document.getElementById('code-submit');
+
+  const authHeaders = () => (session ? { Authorization: 'Bearer ' + session } : {});
+
+  function formatBytes(n) {
+    if (n >= 1024 ** 3) return (n / 1024 ** 3).toFixed(n >= 10 * 1024 ** 3 ? 0 : 1) + ' GB';
+    if (n >= 1024 ** 2) return Math.round(n / 1024 ** 2) + ' MB';
+    if (n >= 1024)      return Math.round(n / 1024) + ' KB';
+    return n + ' B';
+  }
+
+  function showToast(msg, type = '') {
+    toast.textContent = msg;
+    toast.className = `show ${type}`;
+    clearTimeout(showToast.timer);
+    showToast.timer = setTimeout(() => { toast.className = ''; }, 4000);
+  }
+
+  function emptyHint(list, text) {
+    const p = document.createElement('p');
+    p.className = 'files-empty';
+    p.textContent = text;
+    list.appendChild(p);
+  }
+
+  // ── Freischalten ───────────────────────────────────────────────────────────
+
+  codeInput.addEventListener('input', () => {
+    codeInput.value = codeInput.value.replace(/\D/g, '').slice(0, 6);
+    if (codeInput.value.length === 6) unlock();
+  });
+  codeInput.addEventListener('keydown', e => { if (e.key === 'Enter') unlock(); });
+  codeSubmit.addEventListener('click', unlock);
+
+  let unlocking = false;
+
+  async function unlock() {
+    const code = codeInput.value.trim();
+    if (unlocking || code.length !== 6) return;
+
+    unlocking = true;
+    codeSubmit.disabled = true;
+    codeSubmit.textContent = '…';
+
+    try {
+      const res  = await fetch('/api/unlock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      });
+      const data = await res.json();
+
+      if (res.ok && data.token) {
+        session = data.token;
+        sessionStorage.setItem('download-session', session);
+        codeInput.value = '';
+        oeffnen();
+      } else {
+        codeInput.value = '';
+        codeInput.classList.add('shake');
+        setTimeout(() => codeInput.classList.remove('shake'), 400);
+        showToast(data.error || 'Code stimmt nicht', 'error');
+      }
+    } catch {
+      showToast('Verbindungsfehler – bitte erneut versuchen', 'error');
+    } finally {
+      unlocking = false;
+      codeSubmit.disabled = false;
+      codeSubmit.textContent = 'Öffnen';
+    }
+  }
+
+  function oeffnen() {
+    document.getElementById('gate').style.display = 'none';
+    document.getElementById('inhalt').classList.add('visible');
+    document.getElementById('untertitel').textContent = 'Alles, was bei mir angekommen ist.';
+    loadFiles();
+    loadNotes();
+  }
+
+  // ── Dateien ────────────────────────────────────────────────────────────────
+
+  async function loadFiles() {
+    const list = document.getElementById('files-list');
+    try {
+      const res = await fetch('/api/files', { headers: authHeaders() });
+      if (res.status === 401) return abgelaufen();
+      if (!res.ok) return;
+      const { files } = await res.json();
+
+      list.textContent = '';
+      if (!files.length) emptyHint(list, 'Noch nichts da.');
+
+      for (const f of files) {
+        const row = document.createElement('div');
+        row.className = 'file-row';
+
+        const a = document.createElement('a');
+        // Kein innerHTML: der Dateiname stammt vom Absender.
+        a.textContent = f.name;
+        a.title = f.name;
+        a.href = '/api/files/download?key=' + encodeURIComponent(f.key);
+        a.setAttribute('download', f.name);
+
+        const meta = document.createElement('span');
+        meta.className = 'meta';
+        meta.textContent = `${formatBytes(f.size)} · ${new Date(f.uploadedAt).toLocaleDateString('de-DE')}`;
+
+        const del = document.createElement('button');
+        del.className = 'danger';
+        del.type = 'button';
+        del.textContent = 'löschen';
+        del.onclick = async () => {
+          if (!confirm(`„${f.name}“ endgültig löschen?`)) return;
+          try {
+            const r = await fetch('/api/files?key=' + encodeURIComponent(f.key), {
+              method: 'DELETE', headers: authHeaders(),
+            });
+            if (!r.ok) throw new Error();
+            loadFiles();
+          } catch { showToast('Löschen fehlgeschlagen', 'error'); }
+        };
+
+        row.append(a, meta, del);
+        list.appendChild(row);
+      }
+    } catch {
+      showToast('Liste konnte nicht geladen werden', 'error');
+    }
+  }
+
+  // ── Texte ──────────────────────────────────────────────────────────────────
+
+  // Baut aus reinem Text Knoten und macht dabei http(s)-Adressen anklickbar.
+  // Bewusst über DOM-Knoten und nicht über innerHTML: der Text kommt von
+  // fremden Leuten. Andere Schemata – allen voran javascript: – bleiben Text.
+  function linkify(text) {
+    const frag = document.createDocumentFragment();
+    const re = /https?:\/\/[^\s<>"']+/g;
+    let last = 0, m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) frag.append(text.slice(last, m.index));
+      const a = document.createElement('a');
+      a.href = m[0];
+      a.textContent = m[0];
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      frag.appendChild(a);
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) frag.append(text.slice(last));
+    return frag;
+  }
+
+  async function loadNotes() {
+    const list = document.getElementById('notes-list');
+    try {
+      const res = await fetch('/api/notes', { headers: authHeaders() });
+      if (!res.ok) return;
+      const { notes } = await res.json();
+
+      list.textContent = '';
+      if (!notes.length) emptyHint(list, 'Noch nichts da.');
+
+      for (const n of notes) {
+        const row = document.createElement('div');
+        row.className = 'note-row';
+
+        const body = document.createElement('div');
+        body.className = 'note-text';
+        body.appendChild(linkify(n.text));
+
+        const tools = document.createElement('div');
+        tools.className = 'note-tools';
+
+        const when = document.createElement('span');
+        when.textContent = new Date(n.createdAt).toLocaleString('de-DE',
+          { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+        const copy = document.createElement('button');
+        copy.type = 'button';
+        copy.textContent = 'kopieren';
+        copy.onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(n.text);
+            copy.textContent = 'kopiert ✓';
+            setTimeout(() => { copy.textContent = 'kopieren'; }, 1500);
+          } catch {
+            showToast('Zwischenablage nicht verfügbar', 'error');
+          }
+        };
+
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'danger';
+        del.textContent = 'löschen';
+        del.onclick = async () => {
+          try {
+            await fetch('/api/notes?id=' + encodeURIComponent(n.id), {
+              method: 'DELETE', headers: authHeaders(),
+            });
+            loadNotes();
+          } catch { showToast('Löschen fehlgeschlagen', 'error'); }
+        };
+
+        tools.append(when, copy, del);
+        row.append(body, tools);
+        list.appendChild(row);
+      }
+    } catch {
+      // Texte sind Beiwerk – ein Fehler hier soll die Dateiliste nicht stören.
+    }
+  }
+
+  function abgelaufen() {
+    session = null;
+    sessionStorage.removeItem('download-session');
+    document.getElementById('gate').style.display = '';
+    document.getElementById('inhalt').classList.remove('visible');
+    showToast('Sitzung abgelaufen – bitte neuen Code eingeben', 'error');
+  }
+
+  // ── Start ──────────────────────────────────────────────────────────────────
+
+  (async () => {
+    try {
+      const res = await fetch('/api/status', { headers: authHeaders() });
+      limits = await res.json();
+    } catch {
+      showToast('Server nicht erreichbar', 'error');
+      return;
+    }
+
+    document.getElementById('footer').textContent =
+      `Dateien werden nach ${limits.retentionDays} Tagen automatisch gelöscht.`;
+
+    if (!limits.twoFactorConfigured) {
+      document.getElementById('gate-hint').textContent =
+        'Auf dem Server ist keine Zwei-Faktor-Anmeldung eingerichtet.';
+      codeInput.disabled = true;
+      codeSubmit.disabled = true;
+      return;
+    }
+
+    // Ein noch gültiges Token aus derselben Sitzung spart den Code.
+    if (limits.elevated) oeffnen(); else codeInput.focus();
+  })();
+</script>
+</body>
+</html>

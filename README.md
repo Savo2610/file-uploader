@@ -1,25 +1,41 @@
 # upload.veerka.mp
 
 Ein Briefkasten, in den mir andere Dateien legen können. Läuft als Cloudflare
-Worker: die Seite und die API kommen aus demselben Worker, die Dateien landen
-in einem privaten R2-Bucket, Protokoll und Kontingent stehen in D1.
+Worker: die Dateien landen in einem privaten R2-Bucket, Protokoll und
+Kontingent stehen in D1.
+
+Zwei Adressen, ein Worker:
+
+| Adresse              | Wer          | Wofür                                 |
+| -------------------- | ------------ | ------------------------------------- |
+| `upload.veerka.mp`   | jeder        | Dateien und Texte einwerfen           |
+| `download.veerka.mp` | nur mit 2FA  | ansehen, herunterladen, löschen       |
+
+Getrennt wird nach Hostnamen, und zwar nicht nur in der Anzeige: unter
+`upload.veerka.mp` existieren die Routen zum Abholen schlicht nicht, auch
+nicht mit gültigem Sitzungstoken.
 
 ```bash
-npm run dev                 # lokal auf http://localhost:8788
-node tools/test-api.mjs     # End-to-End-Test gegen den laufenden dev-Server
-npm run deploy              # von Hand nach upload.veerka.mp
+# Beide Seiten einzeln starten – siehe Kommentar in tools/test-api.mjs
+npx wrangler dev --port 8788
+npx wrangler dev --port 8789 --host download.veerka.mp
+
+node tools/test-api.mjs     # End-to-End-Test gegen beide
+npm run deploy              # von Hand veröffentlichen
 ```
 
 ## Struktur
 
 | Pfad                 | Was drin ist                                          |
 | -------------------- | ----------------------------------------------------- |
-| `public/index.html`  | die komplette Seite – HTML, CSS und JS in einer Datei  |
-| `public/_headers`    | Cache- und Sicherheits-Header für die Seite            |
-| `src/index.js`       | die API: Limits, Kontingent, Upload, Dateiliste        |
+| `public/index.html`  | die Upload-Seite                                       |
+| `public/download.html` | die Abhol-Seite                                      |
+| `public/style.css`   | gemeinsames Aussehen beider Seiten                     |
+| `public/_headers`    | Cache- und Sicherheits-Header                          |
+| `src/index.js`       | die API, und welche Route unter welchem Host existiert |
 | `src/crypto.js`      | TOTP nach RFC 6238 und signierte Sitzungstoken         |
 | `schema.sql`         | Tabellen für D1                                        |
-| `tools/test-api.mjs` | 35 Tests, vor allem gegen Umgehungsversuche            |
+| `tools/test-api.mjs` | 43 Tests, vor allem gegen Umgehungsversuche            |
 | `TEXT_INPUT_FEATURE.md` | Notiz zu einer noch nicht gebauten Idee            |
 
 ## Wie ein Upload läuft
@@ -96,6 +112,8 @@ geprüft, und `tools/test-api.mjs` versucht genau das zu umgehen.
   unter upload.veerka.mp im Browser ausführen.
 - Dateinamen werden von Steuerzeichen, Pfadtrennzeichen und `..` befreit,
   bevor sie in den Objektschlüssel wandern.
+- Ein bereits benutzter 2FA-Code zählt **nicht** als Fehlversuch. Der Code war
+  ja richtig – wer zweimal tippt, soll sich nicht selbst aussperren.
 
 Das Cookie, das beim Freischalten gesetzt wird, gilt nur für `/api/files` –
 es existiert allein, damit ein `<a href>` beim Download etwas mitschicken

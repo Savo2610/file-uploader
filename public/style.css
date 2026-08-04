@@ -1,0 +1,378 @@
+/* Gemeinsames Aussehen von upload.veerka.mp und download.veerka.mp.
+   Liegt in einer eigenen Datei, damit eine Änderung nicht in zwei HTML-Dateien
+   gepflegt werden muss und die Seiten nicht auseinanderlaufen. */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg: #0f0e0c;
+  --surface: #1a1916;
+  --border: #2e2c28;
+  --gold: #c9a84c;
+  --gold-light: #e2c472;
+  --text: #f0ece3;
+  --muted: #7a7568;
+  --success: #5a9e6f;
+  --error: #c0554a;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 300;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  overflow-x: hidden;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.5;
+}
+
+.container {
+  position: relative;
+  z-index: 1;
+  width: 100%;
+  max-width: 560px;
+}
+
+header {
+  text-align: center;
+  margin-bottom: 3rem;
+  animation: fadeUp 0.8s ease both;
+}
+
+.eyebrow {
+  font-size: 0.7rem;
+  letter-spacing: 0.25em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 1rem;
+}
+
+h1 {
+  font-family: 'DM Serif Display', serif;
+  font-size: clamp(2rem, 5vw, 3rem);
+  line-height: 1.1;
+  color: var(--text);
+  margin-bottom: 0.75rem;
+}
+
+h1 em { font-style: italic; color: var(--gold-light); }
+
+.subtitle {
+  color: var(--muted);
+  font-size: 0.88rem;
+  line-height: 1.7;
+}
+
+/* Dropzone */
+.dropzone {
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--surface);
+  padding: 2.5rem 2rem;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  position: relative;
+  animation: fadeUp 0.8s 0.15s ease both;
+}
+
+.dropzone:hover, .dropzone.dragover {
+  border-color: var(--gold);
+  background: #1f1d19;
+}
+
+.dropzone input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+  width: 100%;
+  height: 100%;
+}
+
+.drop-icon { width: 44px; height: 44px; margin: 0 auto 1.1rem; opacity: 0.35; }
+.drop-label { font-size: 0.93rem; color: var(--muted); line-height: 1.6; }
+.drop-label strong { color: var(--gold); font-weight: 500; }
+.drop-hint { font-size: 0.72rem; color: var(--muted); margin-top: 0.45rem; opacity: 0.55; }
+
+/* Preview grid */
+#preview-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.preview-wrap { display: flex; flex-direction: column; }
+
+.preview-thumb {
+  aspect-ratio: 1;
+  border-radius: 1px;
+  overflow: hidden;
+  position: relative;
+  background: var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.6rem;
+}
+
+.preview-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+/* Wer „Bewegung reduzieren“ eingestellt hat, bekommt keine Einblend-
+   Animationen – die Seite ist sofort da. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+.remove-btn {
+  position: absolute;
+  top: 3px; right: 3px;
+  background: rgba(0,0,0,0.72);
+  border: none; color: white;
+  width: 18px; height: 18px;
+  border-radius: 50%; font-size: 10px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+
+.file-name-tag {
+  font-size: 0.58rem; color: var(--muted);
+  text-align: center; padding: 3px 4px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+/* Progress */
+#progress-area { margin-top: 1.25rem; display: none; }
+
+.progress-file {
+  display: flex; align-items: center; gap: 0.75rem;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--border);
+}
+.progress-file:last-child { border-bottom: none; }
+.progress-file-name { flex: 1; font-size: 0.8rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.progress-status { font-size: 0.74rem; min-width: 70px; text-align: right; }
+.status-uploading { color: var(--gold); }
+.status-done { color: var(--success); }
+.status-error { color: var(--error); }
+.progress-bar-wrap { width: 100%; height: 2px; background: var(--border); border-radius: 1px; margin-top: 2px; }
+.progress-bar-fill { height: 100%; background: var(--gold); border-radius: 1px; width: 0%; transition: width 0.3s; }
+
+/* Upload button */
+button.upload-btn {
+  width: 100%; margin-top: 1.5rem; padding: 1rem;
+  background: var(--gold); color: #0f0e0c;
+  border: none; border-radius: 1px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.85rem; font-weight: 500;
+  letter-spacing: 0.1em; text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.2s, opacity 0.2s;
+  animation: fadeUp 0.8s 0.3s ease both;
+}
+button.upload-btn:hover { background: var(--gold-light); }
+button.upload-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+
+
+/* Password area */
+.pw-area { margin-top: 1.1rem; animation: fadeUp 0.8s 0.38s ease both; }
+
+.pw-toggle {
+  background: none;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.77rem; letter-spacing: 0.07em;
+  padding: 0.55rem 1rem; border-radius: 1px;
+  cursor: pointer; width: 100%;
+  display: flex; align-items: center; justify-content: center; gap: 0.45rem;
+  transition: border-color 0.2s, color 0.2s;
+}
+.pw-toggle:hover { border-color: var(--gold); color: var(--gold); }
+.pw-toggle svg { width: 12px; height: 12px; flex-shrink: 0; }
+
+.pw-form { display: none; margin-top: 0.65rem; gap: 0.5rem; align-items: stretch; }
+.pw-form.open { display: flex; }
+
+.pw-input {
+  flex: 1; background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.85rem; padding: 0.65rem 0.85rem;
+  border-radius: 1px; outline: none;
+  transition: border-color 0.2s;
+}
+.pw-input:focus { border-color: var(--gold); }
+.pw-input::placeholder { color: var(--muted); opacity: 0.45; }
+.pw-input.shake { animation: shake 0.35s ease; border-color: var(--error) !important; }
+
+.pw-submit {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--gold);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.77rem; letter-spacing: 0.07em;
+  padding: 0.65rem 1.1rem; border-radius: 1px;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  white-space: nowrap;
+}
+.pw-submit:hover { border-color: var(--gold); background: #1f1d19; }
+.pw-submit:disabled { opacity: 0.4; cursor: not-allowed; }
+
+.pw-badge {
+  display: none; align-items: center; justify-content: center; gap: 0.4rem;
+  margin-top: 0.65rem; padding: 0.5rem 1rem;
+  border: 1px solid var(--success); border-radius: 1px;
+  color: var(--success); font-size: 0.77rem; letter-spacing: 0.06em;
+  animation: fadeUp 0.3s ease both;
+}
+.pw-badge.visible { display: flex; }
+
+.limit-info { margin-top: 0.55rem; text-align: center; font-size: 0.71rem; color: var(--muted); opacity: 0.65; }
+.limit-info span { color: var(--gold); font-weight: 500; }
+.limit-info span.unlocked { color: var(--success); }
+
+/* Toast */
+#toast {
+  position: fixed; bottom: 2rem; left: 50%;
+  transform: translateX(-50%) translateY(16px);
+  background: var(--surface); border: 1px solid var(--border);
+  padding: 0.7rem 1.4rem; border-radius: 2px;
+  font-size: 0.83rem; opacity: 0;
+  transition: opacity 0.25s, transform 0.25s;
+  pointer-events: none; z-index: 100; white-space: nowrap;
+}
+#toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+#toast.success { border-color: var(--success); color: var(--success); }
+#toast.error { border-color: var(--error); color: var(--error); }
+
+footer {
+  margin-top: 3rem; text-align: center;
+  font-size: 0.68rem; color: var(--muted); opacity: 0.45;
+  animation: fadeUp 0.8s 0.5s ease both;
+}
+
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes shake {
+  0%,100% { transform: translateX(0); }
+  25%      { transform: translateX(-6px); }
+  75%      { transform: translateX(6px); }
+}
+
+/* Eingabefeld für den 2FA-Code: sechs Ziffern, deshalb breit gesperrt
+   und mit Ziffernschrift, damit man Vertipper sofort sieht. */
+.code-input {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.4em;
+  text-align: center;
+  font-size: 1.05rem;
+}
+.code-input::placeholder { letter-spacing: 0.2em; }
+
+/* Dateiliste nach der Freischaltung */
+.files { margin-top: 1.6rem; display: none; animation: fadeUp 0.5s ease both; }
+.files.visible { display: block; }
+.files h2 {
+  font-family: 'DM Serif Display', serif; font-size: 1.15rem;
+  font-weight: 400; margin-bottom: 0.7rem; color: var(--text);
+}
+.file-row {
+  display: flex; align-items: baseline; gap: 0.75rem;
+  padding: 0.55rem 0; border-bottom: 1px solid var(--border);
+  font-size: 0.82rem;
+}
+.file-row:last-child { border-bottom: none; }
+.file-row a { color: var(--gold); text-decoration: none; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.file-row a:hover { color: var(--gold-light); text-decoration: underline; }
+.file-row .meta { color: var(--muted); font-size: 0.72rem; white-space: nowrap; }
+.files-empty { color: var(--muted); font-size: 0.8rem; opacity: 0.6; }
+
+/* Textfeld zum Einfügen */
+.note-area { margin-top: 1rem; animation: fadeUp 0.8s 0.22s ease both; }
+.note-input {
+  width: 100%;
+  min-height: 84px;
+  resize: vertical;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  font-size: 0.85rem;
+  line-height: 1.6;
+  padding: 0.8rem 0.9rem;
+  outline: none;
+  transition: border-color 0.2s;
+}
+.note-input:focus { border-color: var(--gold); }
+.note-input::placeholder { color: var(--muted); opacity: 0.5; }
+.note-count { font-size: 0.68rem; color: var(--muted); opacity: 0.55; text-align: right; margin-top: 0.3rem; }
+
+/* Eingegangene Texte */
+.note-row {
+  border-bottom: 1px solid var(--border);
+  padding: 0.7rem 0;
+}
+.note-row:last-child { border-bottom: none; }
+.note-text {
+  font-size: 0.82rem; line-height: 1.6; color: var(--text);
+  white-space: pre-wrap; word-break: break-word;
+  max-height: 11rem; overflow-y: auto;
+}
+.note-text a { color: var(--gold); }
+.note-tools {
+  display: flex; align-items: center; gap: 0.8rem;
+  margin-top: 0.45rem; font-size: 0.7rem; color: var(--muted);
+}
+.note-tools button {
+  background: none; border: none; padding: 0;
+  color: var(--gold); font-family: 'DM Sans', sans-serif;
+  font-size: 0.7rem; cursor: pointer;
+}
+.note-tools button:hover { color: var(--gold-light); text-decoration: underline; }
+.note-tools .danger { color: var(--muted); }
+.note-tools .danger:hover { color: var(--error); }
+.file-row .danger {
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--muted); font-size: 0.7rem; font-family: 'DM Sans', sans-serif;
+}
+.file-row .danger:hover { color: var(--error); }
+
+/* Auf dem Handy sind die Zeilen der Listen sonst 15 px hoch und kaum zu
+   treffen. Die Schrift bleibt gleich, nur die Tippfläche wächst. */
+@media (max-width: 640px) {
+  body { padding: 1.25rem; }
+  header { margin-bottom: 2rem; }
+
+  .file-row { padding: 0; gap: 0.6rem; }
+  .file-row a,
+  .file-row .danger,
+  .note-tools button {
+    padding-top: 0.7rem;
+    padding-bottom: 0.7rem;
+  }
+  .note-tools { gap: 1.2rem; }
+
+  /* iOS zoomt in jedes Feld mit weniger als 16 px Schrift hinein. */
+  .note-input, .pw-input { font-size: 16px; }
+}
