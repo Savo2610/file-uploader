@@ -1,0 +1,10 @@
+# no-cache heißt nicht „nicht speichern“, sondern „vor dem Wiederverwenden
+# nachfragen“. Der Browser schickt dann sein ETag und bekommt meist nur ein
+# leeres 304 zurück – praktisch gratis, aber eine Änderung an der Seite ist
+# sofort draußen. Mit einem festen max-age hätten Besucher bis zum Ablauf die
+# alte Fassung bekommen.
+/*
+  Cache-Control: no-cache
+  X-Content-Type-Options: nosniff
+  X-Frame-Options: DENY
+  Referrer-Policy: strict-origin-when-cross-origin

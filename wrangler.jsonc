@@ -1,0 +1,17 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+
+  // Der Name muss exakt dem Worker-Namen im Cloudflare-Dashboard entsprechen,
+  // sonst legt ein Build einen zweiten Worker an.
+  "name": "upload",
+  "compatibility_date": "2026-08-04",
+
+  // Reine statische Seite: kein main, nur der Ordner mit den Dateien.
+  "assets": { "directory": "./public" },
+
+  "routes": [
+    { "pattern": "upload-neu.veerka.mp", "custom_domain": true }
+  ],
+
+  "observability": { "enabled": true }
+}

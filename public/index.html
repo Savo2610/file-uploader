@@ -4,7 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Dateien senden</title>
+  <meta name="theme-color" content="#0f0e0c">
+  <!-- Persönlicher Upload-Briefkasten – hat in Suchmaschinen nichts verloren. -->
+  <meta name="robots" content="noindex, nofollow">
+  <!-- Favicon inline, spart eine 404-Anfrage bei jedem Seitenaufruf. -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%93%A4%3C/text%3E%3C/svg%3E">
+  <!-- Die Schrift-CSS liegt bei googleapis, die Font-Dateien selbst bei
+       gstatic – ohne das zweite preconnect wartet der Browser zweimal. -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -138,6 +146,12 @@
 
     .preview-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 
+    /* Wer „Bewegung reduzieren“ eingestellt hat, bekommt keine Einblend-
+       Animationen – die Seite ist sofort da. */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation: none !important; transition: none !important; }
+    }
+
     .remove-btn {
       position: absolute;
       top: 3px; right: 3px;
@@ -171,6 +185,19 @@
     .status-error { color: var(--error); }
     .progress-bar-wrap { width: 100%; height: 2px; background: var(--border); border-radius: 1px; margin-top: 2px; }
     .progress-bar-fill { height: 100%; background: var(--gold); border-radius: 1px; width: 0%; transition: width 0.3s; }
+
+    /* Während des Sendens ist kein Prozentwert messbar (siehe Kommentar im
+       Skript) – eine laufende Animation zeigt, dass noch etwas passiert. */
+    .progress-bar-fill.indeterminate {
+      width: 100% !important;
+      background: linear-gradient(90deg, var(--border) 0%, var(--gold) 50%, var(--border) 100%);
+      background-size: 200% 100%;
+      animation: sweep 1.2s linear infinite;
+    }
+    @keyframes sweep {
+      from { background-position: 200% 0; }
+      to   { background-position: -200% 0; }
+    }
 
     /* Upload button */
     button.upload-btn {
@@ -290,7 +317,7 @@
   </header>
 
   <div class="dropzone" id="dropzone">
-    <input type="file" id="file-input" multiple />
+    <input type="file" id="file-input" multiple aria-label="Dateien auswählen" />
     <svg class="drop-icon" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
       <path d="M24 4L24 32M24 4L16 12M24 4L32 12" stroke="#c9a84c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
       <path d="M8 36V40C8 41.1 8.9 42 10 42H38C39.1 42 40 41.1 40 40V36" stroke="#c9a84c" stroke-width="1.5" stroke-linecap="round"/>
@@ -350,14 +377,23 @@
   const uploadBtn    = document.getElementById('upload-btn');
   const toast        = document.getElementById('toast');
 
-  // Drag & Drop
-  dropzone.addEventListener('dragover',  e => { e.preventDefault(); dropzone.classList.add('dragover'); });
-  dropzone.addEventListener('dragleave', () => dropzone.classList.remove('dragover'));
+  // Drag & Drop. dragenter/dragleave feuern auch beim Wechsel zwischen den
+  // Kind-Elementen der Zone – ohne Zähler würde die Markierung flackern.
+  let dragDepth = 0;
+  dropzone.addEventListener('dragenter', e => { e.preventDefault(); if (++dragDepth === 1) dropzone.classList.add('dragover'); });
+  dropzone.addEventListener('dragover',  e => e.preventDefault());
+  dropzone.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; dropzone.classList.remove('dragover'); } });
   dropzone.addEventListener('drop', e => {
     e.preventDefault();
+    dragDepth = 0;
     dropzone.classList.remove('dragover');
     addFiles([...e.dataTransfer.files]);
   });
+
+  // Ohne das öffnet der Browser eine daneben fallen gelassene Datei einfach
+  // im Tab – und die ausgewählten Dateien sind weg.
+  addEventListener('dragover', e => e.preventDefault());
+  addEventListener('drop',     e => e.preventDefault());
   fileInput.addEventListener('change', () => addFiles([...fileInput.files]));
 
   // ── Passwort – wird serverseitig geprüft ────
@@ -435,9 +471,20 @@
     return '📁';
   }
 
+  // Jede Bildvorschau belegt über URL.createObjectURL Speicher, den der Browser
+  // erst beim revokeObjectURL wieder freigibt. Ohne das Aufräumen sammeln sich
+  // bei mehrfachem Auswählen ganze Fotos im Arbeitsspeicher an.
+  let previewUrls = [];
+
+  function clearPreviewUrls() {
+    previewUrls.forEach(URL.revokeObjectURL);
+    previewUrls = [];
+  }
+
   function renderPreviews() {
+    clearPreviewUrls();
     previewGrid.innerHTML = '';
-    selectedFiles.forEach((file, i) => {
+    selectedFiles.forEach(file => {
       const wrap  = document.createElement('div');
       wrap.className = 'preview-wrap';
       const thumb = document.createElement('div');
@@ -445,19 +492,32 @@
       const icon = fileIcon(file);
       if (!icon) {
         const img = document.createElement('img');
-        img.src = URL.createObjectURL(file);
+        const url = URL.createObjectURL(file);
+        previewUrls.push(url);
+        img.src = url;
+        img.alt = '';
+        img.decoding = 'async';
         thumb.appendChild(img);
       } else {
         thumb.textContent = icon;
       }
       const btn = document.createElement('button');
       btn.className = 'remove-btn';
+      btn.type = 'button';
       btn.textContent = '×';
-      btn.onclick = () => { selectedFiles.splice(i, 1); renderPreviews(); uploadBtn.disabled = !selectedFiles.length; };
+      btn.title = 'Entfernen';
+      // Über die Datei selbst entfernen statt über den Index: der Index einer
+      // Vorschau stimmt sonst nicht mehr, sobald davor etwas gelöscht wurde.
+      btn.onclick = () => {
+        selectedFiles = selectedFiles.filter(f => f !== file);
+        renderPreviews();
+        uploadBtn.disabled = !selectedFiles.length;
+      };
       thumb.appendChild(btn);
       const label = document.createElement('div');
       label.className = 'file-name-tag';
       label.textContent = file.name;
+      label.title = file.name;
       wrap.appendChild(thumb);
       wrap.appendChild(label);
       previewGrid.appendChild(wrap);
@@ -467,57 +527,118 @@
   // ── Upload ───────────────────────────────────
   uploadBtn.addEventListener('click', async () => {
     if (!selectedFiles.length) return;
-    if (APPS_SCRIPT_URL === 'DEINE_APPS_SCRIPT_URL_HIER') {
-      showToast('Bitte zuerst die Apps Script URL eintragen', 'error'); return;
-    }
     uploadBtn.disabled = true;
     progressArea.style.display = 'block';
     progressArea.innerHTML = '';
-    let allOk = true;
-    for (const file of selectedFiles) { if (!(await uploadFile(file))) allOk = false; }
-    selectedFiles = []; previewGrid.innerHTML = ''; fileInput.value = ''; uploadBtn.disabled = true;
-    uploadBtn.textContent = 'Senden';
-    showToast(allOk ? 'Alle Dateien erfolgreich gesendet!' : 'Einige Dateien konnten nicht gesendet werden', allOk ? 'success' : 'error');
+
+    // Fehlgeschlagene Dateien bleiben ausgewählt, damit man sie mit einem
+    // zweiten Klick erneut senden kann, statt sie neu heraussuchen zu müssen.
+    const failed = [];
+    for (const file of selectedFiles) {
+      if (!(await uploadFile(file))) failed.push(file);
+    }
+
+    selectedFiles = failed;
+    fileInput.value = '';
+    renderPreviews();
+    uploadBtn.disabled = !selectedFiles.length;
+
+    if (!failed.length) {
+      showToast('Alle Dateien erfolgreich gesendet!', 'success');
+    } else {
+      showToast(`${failed.length} Datei(en) konnten nicht gesendet werden – nochmal senden?`, 'error');
+    }
   });
 
-  async function uploadFile(file) {
-    const id = 'f' + Math.random().toString(36).slice(2);
+  function uploadFile(file) {
+    // Zeile per DOM aufbauen statt per innerHTML: ein Dateiname darf spitze
+    // Klammern enthalten und würde sonst als HTML in die Seite geschrieben.
     const row = document.createElement('div');
     row.className = 'progress-file';
-    row.innerHTML = `<div style="flex:1">
-      <div style="display:flex;justify-content:space-between;align-items:center">
-        <span class="progress-file-name">${file.name}</span>
-        <span class="progress-status status-uploading" id="st-${id}">Wird gesendet…</span>
-      </div>
-      <div class="progress-bar-wrap"><div class="progress-bar-fill" id="bar-${id}"></div></div>
-    </div>`;
+    const col  = document.createElement('div');
+    col.style.flex = '1';
+    const head = document.createElement('div');
+    head.style.cssText = 'display:flex;justify-content:space-between;align-items:center';
+    const nameEl = document.createElement('span');
+    nameEl.className = 'progress-file-name';
+    nameEl.textContent = file.name;
+    nameEl.title = file.name;
+    const stEl = document.createElement('span');
+    stEl.className = 'progress-status status-uploading';
+    stEl.textContent = 'Wird gelesen…';
+    head.append(nameEl, stEl);
+    const barWrap = document.createElement('div');
+    barWrap.className = 'progress-bar-wrap';
+    const barEl = document.createElement('div');
+    barEl.className = 'progress-bar-fill';
+    barWrap.appendChild(barEl);
+    col.append(head, barWrap);
+    row.appendChild(col);
     progressArea.appendChild(row);
-    const stEl  = document.getElementById(`st-${id}`);
-    const barEl = document.getElementById(`bar-${id}`);
-    try {
-      const base64 = await toBase64(file, barEl);
-      const res = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        body: JSON.stringify({ action: 'upload', fileName: file.name, mimeType: file.type || 'application/octet-stream', data: base64 })
-      });
-      const result = await res.json();
-      if (result.status === 'ok') {
-        stEl.textContent = '✓ Gesendet'; stEl.className = 'progress-status status-done';
-        barEl.style.width = '100%'; barEl.style.background = 'var(--success)';
+
+    return (async () => {
+      try {
+        // Phase 1 – die Datei lokal in Base64 umwandeln. Nur dieser Teil lässt
+        // sich in Prozent messen, also füllt er die Leiste ganz.
+        const base64 = await toBase64(file, p => { barEl.style.width = Math.round(p * 100) + '%'; });
+
+        // Phase 2 – das eigentliche Senden. Dafür gibt es hier bewusst KEINE
+        // Prozentanzeige: der Fortschritt ließe sich nur über
+        // XMLHttpRequest.upload auslesen, und sobald man dort einen Listener
+        // registriert, verlangt der Browser einen CORS-Preflight (OPTIONS),
+        // den Apps Script nicht beantwortet – der Upload schlägt dann fehl.
+        // Statt einer eingefrorenen Leiste läuft deshalb eine Endlos-Animation.
+        stEl.textContent = 'Wird gesendet…';
+        barEl.classList.add('indeterminate');
+        await postToBackend(file, base64);
+
+        barEl.classList.remove('indeterminate');
+        stEl.textContent = '✓ Gesendet';
+        stEl.className = 'progress-status status-done';
+        barEl.style.width = '100%';
+        barEl.style.background = 'var(--success)';
         return true;
-      } else { throw new Error(result.message); }
-    } catch (err) {
-      stEl.textContent = '✗ Fehler'; stEl.className = 'progress-status status-error';
-      console.error(err); return false;
-    }
+      } catch (err) {
+        barEl.classList.remove('indeterminate');
+        stEl.textContent = '✗ Fehler';
+        stEl.className = 'progress-status status-error';
+        stEl.title = String(err && err.message || err);
+        console.error(file.name, err);
+        return false;
+      }
+    })();
   }
 
-  function toBase64(file, barEl) {
+  // Kein Content-Type setzen: sobald einer gesetzt ist, schickt der Browser
+  // einen CORS-Preflight, den Apps Script nicht beantwortet.
+  async function postToBackend(file, base64) {
+    const res = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify({
+        action: 'upload',
+        fileName: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        data: base64,
+      }),
+    });
+    // Apps Script liefert gelegentlich statt JSON eine HTML-Fehlerseite –
+    // meist bei zu vielen Anfragen kurz hintereinander. Hier wird bewusst
+    // NICHT automatisch wiederholt: die Datei kann bereits angekommen sein und
+    // läge dann doppelt im Drive. Die Datei bleibt stattdessen ausgewählt,
+    // ein zweiter Klick auf „Senden“ versucht es erneut.
+    let result;
+    try { result = await res.json(); }
+    catch { throw new Error('Server antwortete unerwartet – bitte nochmal senden'); }
+    if (result.status !== 'ok') throw new Error(result.message || 'Server hat abgelehnt');
+    return result;
+  }
+
+  function toBase64(file, onProgress) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onprogress = e => { if (e.lengthComputable && barEl) barEl.style.width = Math.round((e.loaded / e.total) * 85) + '%'; };
-      reader.onload    = () => { if (barEl) barEl.style.width = '90%'; resolve(reader.result.split(',')[1]); };
-      reader.onerror   = reject;
+      reader.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
+      reader.onload  = () => { onProgress(1); resolve(reader.result.split(',')[1]); };
+      reader.onerror = () => reject(reader.error || new Error('Datei nicht lesbar'));
       reader.readAsDataURL(file);
     });
   }
