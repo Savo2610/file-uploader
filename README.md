@@ -61,6 +61,11 @@ würden anklickbar.
 
 Die Zahlen stehen als `LIMITS` oben in `src/index.js`.
 
+Gezählt werden **begonnene** Uploads, nicht nur fertige – sonst könnte jemand
+tausende gleichzeitig starten und die Zählung liefe hinterher. Angefangene,
+nie beendete Uploads werden nach 24 Stunden aufgeräumt und geben ihren Platz
+wieder frei.
+
 ## Aufräumen
 
 Ein Cron-Lauf um 4:07 UTC löscht Dateien, die älter als 14 Tage sind, aus R2
@@ -70,11 +75,6 @@ alles einzeln von Hand löschen.
 
 Das ist keine Kosmetik: R2 rechnet nach liegendem Speicher ab. Ohne das
 Aufräumen bliebe jede jemals geschickte Datei für immer liegen.
-
-Gezählt werden **begonnene** Uploads, nicht nur fertige – sonst könnte jemand
-tausende gleichzeitig starten und die Zählung liefe hinterher. Angefangene,
-nie beendete Uploads werden nach 24 Stunden aufgeräumt und geben ihren Platz
-wieder frei.
 
 ## Sicherheit
 
