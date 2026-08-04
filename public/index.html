@@ -186,19 +186,6 @@
     .progress-bar-wrap { width: 100%; height: 2px; background: var(--border); border-radius: 1px; margin-top: 2px; }
     .progress-bar-fill { height: 100%; background: var(--gold); border-radius: 1px; width: 0%; transition: width 0.3s; }
 
-    /* Während des Sendens ist kein Prozentwert messbar (siehe Kommentar im
-       Skript) – eine laufende Animation zeigt, dass noch etwas passiert. */
-    .progress-bar-fill.indeterminate {
-      width: 100% !important;
-      background: linear-gradient(90deg, var(--border) 0%, var(--gold) 50%, var(--border) 100%);
-      background-size: 200% 100%;
-      animation: sweep 1.2s linear infinite;
-    }
-    @keyframes sweep {
-      from { background-position: 200% 0; }
-      to   { background-position: -200% 0; }
-    }
-
     /* Upload button */
     button.upload-btn {
       width: 100%; margin-top: 1.5rem; padding: 1rem;
@@ -305,6 +292,34 @@
       25%      { transform: translateX(-6px); }
       75%      { transform: translateX(6px); }
     }
+
+    /* Eingabefeld für den 2FA-Code: sechs Ziffern, deshalb breit gesperrt
+       und mit Ziffernschrift, damit man Vertipper sofort sieht. */
+    .code-input {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: 0.4em;
+      text-align: center;
+      font-size: 1.05rem;
+    }
+    .code-input::placeholder { letter-spacing: 0.2em; }
+
+    /* Dateiliste nach der Freischaltung */
+    .files { margin-top: 1.6rem; display: none; animation: fadeUp 0.5s ease both; }
+    .files.visible { display: block; }
+    .files h2 {
+      font-family: 'DM Serif Display', serif; font-size: 1.15rem;
+      font-weight: 400; margin-bottom: 0.7rem; color: var(--text);
+    }
+    .file-row {
+      display: flex; align-items: baseline; gap: 0.75rem;
+      padding: 0.55rem 0; border-bottom: 1px solid var(--border);
+      font-size: 0.82rem;
+    }
+    .file-row:last-child { border-bottom: none; }
+    .file-row a { color: var(--gold); text-decoration: none; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .file-row a:hover { color: var(--gold-light); text-decoration: underline; }
+    .file-row .meta { color: var(--muted); font-size: 0.72rem; white-space: nowrap; }
+    .files-empty { color: var(--muted); font-size: 0.8rem; opacity: 0.6; }
   </style>
 </head>
 <body>
@@ -323,17 +338,16 @@
       <path d="M8 36V40C8 41.1 8.9 42 10 42H38C39.1 42 40 41.1 40 40V36" stroke="#c9a84c" stroke-width="1.5" stroke-linecap="round"/>
     </svg>
     <p class="drop-label"><strong>Dateien auswählen</strong> oder hierher ziehen</p>
-    <p class="drop-hint" id="drop-hint">Alle Dateitypen · Max. 50 MB pro Datei</p>
+    <p class="drop-hint" id="drop-hint">Alle Dateitypen</p>
   </div>
 
   <div id="preview-grid"></div>
   <div id="progress-area"></div>
 
-
-    <button class="upload-btn" id="upload-btn" disabled>Senden</button>
+  <button class="upload-btn" id="upload-btn" disabled>Senden</button>
 
   <div class="pw-area">
-    <button class="pw-toggle" id="pw-toggle" onclick="togglePwForm()">
+    <button class="pw-toggle" id="pw-toggle" type="button">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
         <rect x="3" y="11" width="18" height="11" rx="2"/>
         <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
@@ -341,34 +355,41 @@
       Größeres Limit freischalten (bis 10 GB)
     </button>
     <div class="pw-form" id="pw-form">
-      <input class="pw-input" type="password" id="pw-input" placeholder="Passwort eingeben…"
-             onkeydown="if(event.key==='Enter') checkPassword()" />
-      <button class="pw-submit" id="pw-submit" onclick="checkPassword()">Freischalten</button>
+      <input class="pw-input code-input" id="code-input" type="text" inputmode="numeric"
+             autocomplete="one-time-code" maxlength="6" placeholder="000000"
+             aria-label="Sechsstelliger Code aus der Authenticator-App" />
+      <button class="pw-submit" id="code-submit" type="button">Freischalten</button>
     </div>
     <div class="pw-badge" id="pw-badge">
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
       10 GB Limit aktiv
     </div>
-    <p class="limit-info">Aktuelles Limit: <span id="limit-display">50 MB</span> pro Datei</p>
+    <p class="limit-info" id="limit-info">Limit wird geladen…</p>
   </div>
 
-  <footer>Dateien werden verschlüsselt übertragen und sicher gespeichert.</footer>
+  <section class="files" id="files">
+    <h2>Zuletzt angekommen</h2>
+    <div id="files-list"></div>
+  </section>
+
+  <footer>Übertragung per HTTPS. Die Dateien liegen in privatem Cloudflare-Speicher.</footer>
 </div>
 
 <div id="toast"></div>
 
 <script>
-  // ════════════════════════════════════════════
-  //  KONFIGURATION – nur diese Zeile anpassen
-  // ════════════════════════════════════════════
-  const APPS_SCRIPT_URL    = 'https://script.google.com/macros/s/AKfycbyRcsB6IoiddMO0G-cthdlCm9ZGs4mxI-1JH6mOHOy5vZ0RtSvzEVUhBh5rrDj0eGWt/exec';
+  // ── Zustand ────────────────────────────────────────────────────────────────
 
-  const LIMIT_NORMAL_MB   = 50;
-  const LIMIT_UNLOCKED_MB = 10 * 1024; // 10 GB in MB
-  // ════════════════════════════════════════════
+  // Der Sitzungstoken hält nur, solange der Tab offen ist. Wer neu lädt,
+  // tippt einen neuen Code – das ist bei 2FA zumutbar und deutlich besser,
+  // als das Token dauerhaft im Browser liegen zu lassen.
+  let session   = sessionStorage.getItem('upload-session') || null;
+  let limits    = null;
+  let selected  = [];
 
-  let maxFileSizeMB  = LIMIT_NORMAL_MB;
-  let selectedFiles  = [];
+  // Wie viele Teilstücke gleichzeitig laufen. Mehr macht die Leitung selten
+  // schneller, kostet aber im Worker Arbeitsspeicher.
+  const PARALLEL_PARTS = 3;
 
   const dropzone     = document.getElementById('dropzone');
   const fileInput    = document.getElementById('file-input');
@@ -376,9 +397,157 @@
   const progressArea = document.getElementById('progress-area');
   const uploadBtn    = document.getElementById('upload-btn');
   const toast        = document.getElementById('toast');
+  const limitInfo    = document.getElementById('limit-info');
+  const dropHint     = document.getElementById('drop-hint');
 
-  // Drag & Drop. dragenter/dragleave feuern auch beim Wechsel zwischen den
-  // Kind-Elementen der Zone – ohne Zähler würde die Markierung flackern.
+  const authHeaders = () => (session ? { Authorization: 'Bearer ' + session } : {});
+
+  function formatBytes(n) {
+    if (n >= 1024 ** 3) return (n / 1024 ** 3).toFixed(n >= 10 * 1024 ** 3 ? 0 : 1) + ' GB';
+    if (n >= 1024 ** 2) return Math.round(n / 1024 ** 2) + ' MB';
+    if (n >= 1024)      return Math.round(n / 1024) + ' KB';
+    return n + ' B';
+  }
+
+  function showToast(msg, type = '') {
+    toast.textContent = msg;
+    toast.className = `show ${type}`;
+    clearTimeout(showToast.timer);
+    showToast.timer = setTimeout(() => { toast.className = ''; }, 4000);
+  }
+
+  // ── Limits vom Server holen ────────────────────────────────────────────────
+  //
+  // Die Anzeige hier ist reine Höflichkeit. Verbindlich sind allein die
+  // Prüfungen im Worker – der Browser kann alles behaupten.
+
+  async function loadStatus() {
+    try {
+      const res = await fetch('/api/status', { headers: authHeaders() });
+      limits = await res.json();
+    } catch {
+      limitInfo.textContent = 'Server nicht erreichbar.';
+      return;
+    }
+
+    // Ein abgelaufenes Token meldet der Server als „nicht freigeschaltet“.
+    if (session && !limits.elevated) {
+      session = null;
+      sessionStorage.removeItem('upload-session');
+    }
+
+    dropHint.textContent = `Alle Dateitypen · Max. ${formatBytes(limits.maxFileBytes)} pro Datei`;
+
+    if (limits.elevated) {
+      document.getElementById('pw-toggle').style.display = 'none';
+      document.getElementById('pw-form').classList.remove('open');
+      document.getElementById('pw-badge').classList.add('visible');
+      limitInfo.innerHTML = `Aktuelles Limit: <span class="unlocked">${formatBytes(limits.maxFileBytes)}</span> pro Datei`;
+      loadFiles();
+    } else {
+      limitInfo.innerHTML =
+        `Aktuelles Limit: <span>${formatBytes(limits.maxFileBytes)}</span> pro Datei · ` +
+        `noch ${limits.filesRemainingToday} von ${limits.filesPerDay} Dateien heute`;
+      if (!limits.twoFactorConfigured) document.getElementById('pw-toggle').style.display = 'none';
+    }
+  }
+
+  // ── Freischalten ───────────────────────────────────────────────────────────
+
+  const codeInput  = document.getElementById('code-input');
+  const codeSubmit = document.getElementById('code-submit');
+
+  document.getElementById('pw-toggle').addEventListener('click', () => {
+    const form = document.getElementById('pw-form');
+    form.classList.toggle('open');
+    if (form.classList.contains('open')) codeInput.focus();
+  });
+
+  codeInput.addEventListener('input', () => {
+    codeInput.value = codeInput.value.replace(/\D/g, '').slice(0, 6);
+    if (codeInput.value.length === 6) unlock();
+  });
+  codeInput.addEventListener('keydown', e => { if (e.key === 'Enter') unlock(); });
+  codeSubmit.addEventListener('click', unlock);
+
+  let unlocking = false;
+
+  async function unlock() {
+    const code = codeInput.value.trim();
+    if (unlocking || code.length !== 6) return;
+
+    unlocking = true;
+    codeSubmit.disabled = true;
+    codeSubmit.textContent = '…';
+
+    try {
+      const res  = await fetch('/api/unlock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code }),
+      });
+      const data = await res.json();
+
+      if (res.ok && data.token) {
+        session = data.token;
+        sessionStorage.setItem('upload-session', session);
+        codeInput.value = '';
+        showToast('Freigeschaltet – bis 10 GB pro Datei', 'success');
+        await loadStatus();
+      } else {
+        codeInput.value = '';
+        codeInput.classList.add('shake');
+        setTimeout(() => codeInput.classList.remove('shake'), 400);
+        showToast(data.error || 'Code stimmt nicht', 'error');
+      }
+    } catch {
+      showToast('Verbindungsfehler – bitte erneut versuchen', 'error');
+    } finally {
+      unlocking = false;
+      codeSubmit.disabled = false;
+      codeSubmit.textContent = 'Freischalten';
+    }
+  }
+
+  // ── Dateiliste (nur freigeschaltet) ────────────────────────────────────────
+
+  async function loadFiles() {
+    const box  = document.getElementById('files');
+    const list = document.getElementById('files-list');
+    try {
+      const res = await fetch('/api/files', { headers: authHeaders() });
+      if (!res.ok) return;
+      const { files } = await res.json();
+
+      list.textContent = '';
+      if (!files.length) {
+        const p = document.createElement('p');
+        p.className = 'files-empty';
+        p.textContent = 'Noch nichts da.';
+        list.appendChild(p);
+      }
+      for (const f of files) {
+        const row = document.createElement('div');
+        row.className = 'file-row';
+        const a = document.createElement('a');
+        // Kein innerHTML: der Dateiname stammt vom Absender.
+        a.textContent = f.name;
+        a.title = f.name;
+        a.href = '/api/files/download?key=' + encodeURIComponent(f.key);
+        const meta = document.createElement('span');
+        meta.className = 'meta';
+        meta.textContent = `${formatBytes(f.size)} · ${new Date(f.uploadedAt).toLocaleDateString('de-DE')}`;
+        row.append(a, meta);
+        list.appendChild(row);
+      }
+      box.classList.add('visible');
+    } catch {
+      // Liste ist Beiwerk – ein Fehler hier soll das Hochladen nicht stören.
+    }
+  }
+
+  // ── Dateien auswählen ──────────────────────────────────────────────────────
+
   let dragDepth = 0;
   dropzone.addEventListener('dragenter', e => { e.preventDefault(); if (++dragDepth === 1) dropzone.classList.add('dragover'); });
   dropzone.addEventListener('dragover',  e => e.preventDefault());
@@ -389,75 +558,34 @@
     dropzone.classList.remove('dragover');
     addFiles([...e.dataTransfer.files]);
   });
+  fileInput.addEventListener('change', () => addFiles([...fileInput.files]));
 
   // Ohne das öffnet der Browser eine daneben fallen gelassene Datei einfach
   // im Tab – und die ausgewählten Dateien sind weg.
   addEventListener('dragover', e => e.preventDefault());
   addEventListener('drop',     e => e.preventDefault());
-  fileInput.addEventListener('change', () => addFiles([...fileInput.files]));
 
-  // ── Passwort – wird serverseitig geprüft ────
-  function togglePwForm() {
-    const form = document.getElementById('pw-form');
-    form.classList.toggle('open');
-    if (form.classList.contains('open')) document.getElementById('pw-input').focus();
-  }
-
-  async function checkPassword() {
-    const pwInput  = document.getElementById('pw-input');
-    const pwSubmit = document.getElementById('pw-submit');
-    const password = pwInput.value.trim();
-    if (!password) return;
-
-    pwSubmit.disabled = true;
-    pwSubmit.textContent = '…';
-
-    try {
-      // Das Passwort wird ans Backend geschickt und dort verglichen –
-      // es steht nirgends im Frontend-Code.
-      const res  = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        body: JSON.stringify({ action: 'verifyPassword', password })
-      });
-      const data = await res.json();
-
-      if (data.status === 'ok' && data.unlocked) {
-        maxFileSizeMB = LIMIT_UNLOCKED_MB;
-        document.getElementById('pw-form').classList.remove('open');
-        document.getElementById('pw-toggle').style.display = 'none';
-        document.getElementById('pw-badge').classList.add('visible');
-        const lim = document.getElementById('limit-display');
-        lim.textContent = '10 GB';
-        lim.classList.add('unlocked');
-        document.getElementById('drop-hint').textContent = 'Alle Dateitypen · Max. 10 GB pro Datei';
-        showToast('10 GB Limit freigeschaltet!', 'success');
-      } else {
-        pwInput.value = '';
-        pwInput.classList.add('shake');
-        setTimeout(() => pwInput.classList.remove('shake'), 400);
-        showToast('Falsches Passwort', 'error');
-      }
-    } catch {
-      showToast('Verbindungsfehler – bitte erneut versuchen', 'error');
-    } finally {
-      pwSubmit.disabled = false;
-      pwSubmit.textContent = 'Freischalten';
-    }
-  }
-
-  // ── Dateien hinzufügen ───────────────────────
-  function addFiles(newFiles) {
+  function addFiles(incoming) {
+    const max = limits?.maxFileBytes ?? Infinity;
     const tooBig = [];
-    newFiles.forEach(f => {
-      if (f.size / (1024 * 1024) > maxFileSizeMB) { tooBig.push(f.name); return; }
-      if (!selectedFiles.find(x => x.name === f.name && x.size === f.size)) selectedFiles.push(f);
-    });
-    if (tooBig.length) {
-      const lim = maxFileSizeMB >= 1024 ? (maxFileSizeMB / 1024) + ' GB' : maxFileSizeMB + ' MB';
-      showToast(`Zu groß (max. ${lim}): ${tooBig.slice(0, 2).join(', ')}${tooBig.length > 2 ? ` +${tooBig.length - 2}` : ''}`, 'error');
+
+    for (const f of incoming) {
+      if (f.size > max) { tooBig.push(f.name); continue; }
+      if (!selected.some(x => x.name === f.name && x.size === f.size && x.lastModified === f.lastModified)) {
+        selected.push(f);
+      }
     }
+
+    if (tooBig.length) {
+      showToast(
+        `Zu groß (max. ${formatBytes(max)}): ${tooBig.slice(0, 2).join(', ')}` +
+        (tooBig.length > 2 ? ` +${tooBig.length - 2}` : ''),
+        'error',
+      );
+    }
+
     renderPreviews();
-    uploadBtn.disabled = selectedFiles.length === 0;
+    uploadBtn.disabled = selected.length === 0;
   }
 
   function fileIcon(f) {
@@ -466,29 +594,26 @@
     if (f.type.startsWith('audio/')) return '🎵';
     if (f.type.includes('pdf'))      return '📄';
     if (/zip|rar|7z|tar/.test(f.type)) return '🗜️';
-    if (f.type.includes('word') || f.name.endsWith('.docx')) return '📝';
+    if (f.type.includes('word')  || f.name.endsWith('.docx')) return '📝';
     if (f.type.includes('sheet') || f.name.endsWith('.xlsx')) return '📊';
     return '📁';
   }
 
   // Jede Bildvorschau belegt über URL.createObjectURL Speicher, den der Browser
-  // erst beim revokeObjectURL wieder freigibt. Ohne das Aufräumen sammeln sich
-  // bei mehrfachem Auswählen ganze Fotos im Arbeitsspeicher an.
+  // erst beim revokeObjectURL wieder freigibt.
   let previewUrls = [];
 
-  function clearPreviewUrls() {
+  function renderPreviews() {
     previewUrls.forEach(URL.revokeObjectURL);
     previewUrls = [];
-  }
+    previewGrid.textContent = '';
 
-  function renderPreviews() {
-    clearPreviewUrls();
-    previewGrid.innerHTML = '';
-    selectedFiles.forEach(file => {
-      const wrap  = document.createElement('div');
+    selected.forEach(file => {
+      const wrap = document.createElement('div');
       wrap.className = 'preview-wrap';
       const thumb = document.createElement('div');
       thumb.className = 'preview-thumb';
+
       const icon = fileIcon(file);
       if (!icon) {
         const img = document.createElement('img');
@@ -501,6 +626,7 @@
       } else {
         thumb.textContent = icon;
       }
+
       const btn = document.createElement('button');
       btn.className = 'remove-btn';
       btn.type = 'button';
@@ -509,144 +635,178 @@
       // Über die Datei selbst entfernen statt über den Index: der Index einer
       // Vorschau stimmt sonst nicht mehr, sobald davor etwas gelöscht wurde.
       btn.onclick = () => {
-        selectedFiles = selectedFiles.filter(f => f !== file);
+        selected = selected.filter(f => f !== file);
         renderPreviews();
-        uploadBtn.disabled = !selectedFiles.length;
+        uploadBtn.disabled = !selected.length;
       };
       thumb.appendChild(btn);
+
       const label = document.createElement('div');
       label.className = 'file-name-tag';
       label.textContent = file.name;
       label.title = file.name;
-      wrap.appendChild(thumb);
-      wrap.appendChild(label);
+
+      wrap.append(thumb, label);
       previewGrid.appendChild(wrap);
     });
   }
 
-  // ── Upload ───────────────────────────────────
+  // ── Senden ─────────────────────────────────────────────────────────────────
+
   uploadBtn.addEventListener('click', async () => {
-    if (!selectedFiles.length) return;
+    if (!selected.length) return;
     uploadBtn.disabled = true;
     progressArea.style.display = 'block';
-    progressArea.innerHTML = '';
+    progressArea.textContent = '';
 
-    // Fehlgeschlagene Dateien bleiben ausgewählt, damit man sie mit einem
-    // zweiten Klick erneut senden kann, statt sie neu heraussuchen zu müssen.
+    // Fehlgeschlagene Dateien bleiben ausgewählt, damit ein zweiter Klick
+    // reicht, statt alles neu heraussuchen zu müssen.
     const failed = [];
-    for (const file of selectedFiles) {
+    for (const file of selected) {
       if (!(await uploadFile(file))) failed.push(file);
     }
 
-    selectedFiles = failed;
+    selected = failed;
     fileInput.value = '';
     renderPreviews();
-    uploadBtn.disabled = !selectedFiles.length;
+    uploadBtn.disabled = !selected.length;
 
-    if (!failed.length) {
-      showToast('Alle Dateien erfolgreich gesendet!', 'success');
-    } else {
-      showToast(`${failed.length} Datei(en) konnten nicht gesendet werden – nochmal senden?`, 'error');
-    }
+    showToast(
+      failed.length ? `${failed.length} Datei(en) nicht angekommen – nochmal senden?` : 'Alles angekommen!',
+      failed.length ? 'error' : 'success',
+    );
+
+    loadStatus();
   });
 
-  function uploadFile(file) {
-    // Zeile per DOM aufbauen statt per innerHTML: ein Dateiname darf spitze
-    // Klammern enthalten und würde sonst als HTML in die Seite geschrieben.
+  // Baut die Fortschrittszeile per DOM auf. Kein innerHTML: ein Dateiname darf
+  // spitze Klammern enthalten und würde sonst als HTML in die Seite geraten.
+  function progressRow(file) {
     const row = document.createElement('div');
     row.className = 'progress-file';
-    const col  = document.createElement('div');
+    const col = document.createElement('div');
     col.style.flex = '1';
     const head = document.createElement('div');
     head.style.cssText = 'display:flex;justify-content:space-between;align-items:center';
-    const nameEl = document.createElement('span');
-    nameEl.className = 'progress-file-name';
-    nameEl.textContent = file.name;
-    nameEl.title = file.name;
-    const stEl = document.createElement('span');
-    stEl.className = 'progress-status status-uploading';
-    stEl.textContent = 'Wird gelesen…';
-    head.append(nameEl, stEl);
-    const barWrap = document.createElement('div');
-    barWrap.className = 'progress-bar-wrap';
-    const barEl = document.createElement('div');
-    barEl.className = 'progress-bar-fill';
-    barWrap.appendChild(barEl);
-    col.append(head, barWrap);
+
+    const name = document.createElement('span');
+    name.className = 'progress-file-name';
+    name.textContent = file.name;
+    name.title = file.name;
+
+    const status = document.createElement('span');
+    status.className = 'progress-status status-uploading';
+    status.textContent = '0 %';
+
+    head.append(name, status);
+    const wrap = document.createElement('div');
+    wrap.className = 'progress-bar-wrap';
+    const bar = document.createElement('div');
+    bar.className = 'progress-bar-fill';
+    wrap.appendChild(bar);
+    col.append(head, wrap);
     row.appendChild(col);
     progressArea.appendChild(row);
-
-    return (async () => {
-      try {
-        // Phase 1 – die Datei lokal in Base64 umwandeln. Nur dieser Teil lässt
-        // sich in Prozent messen, also füllt er die Leiste ganz.
-        const base64 = await toBase64(file, p => { barEl.style.width = Math.round(p * 100) + '%'; });
-
-        // Phase 2 – das eigentliche Senden. Dafür gibt es hier bewusst KEINE
-        // Prozentanzeige: der Fortschritt ließe sich nur über
-        // XMLHttpRequest.upload auslesen, und sobald man dort einen Listener
-        // registriert, verlangt der Browser einen CORS-Preflight (OPTIONS),
-        // den Apps Script nicht beantwortet – der Upload schlägt dann fehl.
-        // Statt einer eingefrorenen Leiste läuft deshalb eine Endlos-Animation.
-        stEl.textContent = 'Wird gesendet…';
-        barEl.classList.add('indeterminate');
-        await postToBackend(file, base64);
-
-        barEl.classList.remove('indeterminate');
-        stEl.textContent = '✓ Gesendet';
-        stEl.className = 'progress-status status-done';
-        barEl.style.width = '100%';
-        barEl.style.background = 'var(--success)';
-        return true;
-      } catch (err) {
-        barEl.classList.remove('indeterminate');
-        stEl.textContent = '✗ Fehler';
-        stEl.className = 'progress-status status-error';
-        stEl.title = String(err && err.message || err);
-        console.error(file.name, err);
-        return false;
-      }
-    })();
+    return { status, bar };
   }
 
-  // Kein Content-Type setzen: sobald einer gesetzt ist, schickt der Browser
-  // einen CORS-Preflight, den Apps Script nicht beantwortet.
-  async function postToBackend(file, base64) {
-    const res = await fetch(APPS_SCRIPT_URL, {
-      method: 'POST',
-      body: JSON.stringify({
-        action: 'upload',
+  async function uploadFile(file) {
+    const { status, bar } = progressRow(file);
+    let ticket = null;
+
+    try {
+      // 1. Anmelden. Hier entscheidet der Server über Limit und Kontingent.
+      const init = await api('/api/upload/init', {
         fileName: file.name,
-        mimeType: file.type || 'application/octet-stream',
-        data: base64,
-      }),
-    });
-    // Apps Script liefert gelegentlich statt JSON eine HTML-Fehlerseite –
-    // meist bei zu vielen Anfragen kurz hintereinander. Hier wird bewusst
-    // NICHT automatisch wiederholt: die Datei kann bereits angekommen sein und
-    // läge dann doppelt im Drive. Die Datei bleibt stattdessen ausgewählt,
-    // ein zweiter Klick auf „Senden“ versucht es erneut.
-    let result;
-    try { result = await res.json(); }
-    catch { throw new Error('Server antwortete unerwartet – bitte nochmal senden'); }
-    if (result.status !== 'ok') throw new Error(result.message || 'Server hat abgelehnt');
-    return result;
+        size: file.size,
+        contentType: file.type || 'application/octet-stream',
+      });
+      ticket = init.upload;
+
+      // 2. In Teilstücke zerlegen und hochladen. Weil alles über die eigene
+      //    Domain läuft, liefert XMLHttpRequest hier echten Sende-Fortschritt –
+      //    bei einer fremden Domain würde der Listener einen CORS-Preflight
+      //    auslösen.
+      const partCount = init.partCount;
+      const partSize  = init.partSize;
+      const done      = new Array(partCount).fill(0);
+      const etags     = new Array(partCount);
+
+      const redraw = () => {
+        const sent = done.reduce((a, b) => a + b, 0);
+        const pct  = file.size ? Math.min(100, (sent / file.size) * 100) : 100;
+        bar.style.width = pct + '%';
+        status.textContent = Math.floor(pct) + ' %';
+      };
+
+      let next = 0;
+      const worker = async () => {
+        while (true) {
+          const i = next++;
+          if (i >= partCount) return;
+          const blob = file.slice(i * partSize, Math.min((i + 1) * partSize, file.size));
+          const res = await putPart(ticket, i + 1, blob, sent => { done[i] = sent; redraw(); });
+          etags[i] = { partNumber: res.partNumber, etag: res.etag };
+          done[i] = blob.size;
+          redraw();
+        }
+      };
+
+      await Promise.all(
+        Array.from({ length: Math.min(PARALLEL_PARTS, partCount) }, worker),
+      );
+
+      // 3. Zusammensetzen lassen.
+      status.textContent = 'Wird abgelegt…';
+      await api('/api/upload/complete', { upload: ticket, parts: etags });
+
+      status.textContent = '✓ Angekommen';
+      status.className = 'progress-status status-done';
+      bar.style.width = '100%';
+      bar.style.background = 'var(--success)';
+      return true;
+    } catch (err) {
+      status.textContent = '✗ Fehler';
+      status.className = 'progress-status status-error';
+      status.title = err?.message || String(err);
+      console.error(file.name, err);
+
+      // Angefangenen Upload aufräumen, damit er kein Kontingent blockiert.
+      if (ticket) api('/api/upload/abort', { upload: ticket }).catch(() => {});
+      return false;
+    }
   }
 
-  function toBase64(file, onProgress) {
+  async function api(path, body) {
+    const res = await fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify(body),
+    });
+    let data = null;
+    try { data = await res.json(); } catch { /* gleich als Fehler behandelt */ }
+    if (!res.ok) throw new Error(data?.error || `Server antwortete mit ${res.status}`);
+    return data;
+  }
+
+  function putPart(ticket, partNumber, blob, onProgress) {
     return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded / e.total); };
-      reader.onload  = () => { onProgress(1); resolve(reader.result.split(',')[1]); };
-      reader.onerror = () => reject(reader.error || new Error('Datei nicht lesbar'));
-      reader.readAsDataURL(file);
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', `/api/upload/part?upload=${encodeURIComponent(ticket)}&part=${partNumber}`);
+      if (session) xhr.setRequestHeader('Authorization', 'Bearer ' + session);
+      xhr.upload.onprogress = e => { if (e.lengthComputable) onProgress(e.loaded); };
+      xhr.onload = () => {
+        let data = null;
+        try { data = JSON.parse(xhr.responseText); } catch { /* s. u. */ }
+        if (xhr.status >= 200 && xhr.status < 300 && data) resolve(data);
+        else reject(new Error(data?.error || `Teil ${partNumber} abgelehnt (${xhr.status})`));
+      };
+      xhr.onerror = () => reject(new Error('Verbindung unterbrochen'));
+      xhr.send(blob);
     });
   }
 
-  function showToast(msg, type = '') {
-    toast.textContent = msg; toast.className = `show ${type}`;
-    setTimeout(() => { toast.className = ''; }, 3500);
-  }
+  loadStatus();
 </script>
 </body>
 </html>

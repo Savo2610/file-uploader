@@ -4,13 +4,30 @@
   // Der Name muss exakt dem Worker-Namen im Cloudflare-Dashboard entsprechen,
   // sonst legt ein Build einen zweiten Worker an.
   "name": "upload",
+  "main": "src/index.js",
   "compatibility_date": "2026-08-04",
 
-  // Reine statische Seite: kein main, nur der Ordner mit den Dateien.
+  // Die Seite selbst liegt in public/. Alles, was dort keine Datei ist,
+  // landet im Worker – also die /api/-Routen.
   "assets": { "directory": "./public" },
 
   "routes": [
     { "pattern": "upload.veerka.mp", "custom_domain": true }
+  ],
+
+  // Hier landen die hochgeladenen Dateien. Der Bucket ist nicht öffentlich
+  // erreichbar; herausholen kann sie nur, wer einen gültigen 2FA-Code hat.
+  "r2_buckets": [
+    { "binding": "BUCKET", "bucket_name": "upload-veerka-mp" }
+  ],
+
+  // Protokoll, Tageskontingent und Zustand laufender Uploads.
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "upload-meta",
+      "database_id": "9f73fd46-7f9f-448f-8d4b-5a5b5d4326a1"
+    }
   ],
 
   "observability": { "enabled": true }

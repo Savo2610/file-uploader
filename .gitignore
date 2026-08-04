@@ -1,2 +1,4 @@
 node_modules/
 .wrangler/
+.dev.vars
+2fa-einrichtung.txt
