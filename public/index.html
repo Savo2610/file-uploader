@@ -320,6 +320,76 @@
     .file-row a:hover { color: var(--gold-light); text-decoration: underline; }
     .file-row .meta { color: var(--muted); font-size: 0.72rem; white-space: nowrap; }
     .files-empty { color: var(--muted); font-size: 0.8rem; opacity: 0.6; }
+
+    /* Textfeld zum Einfügen */
+    .note-area { margin-top: 1rem; animation: fadeUp 0.8s 0.22s ease both; }
+    .note-input {
+      width: 100%;
+      min-height: 84px;
+      resize: vertical;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 2px;
+      color: var(--text);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 0.85rem;
+      line-height: 1.6;
+      padding: 0.8rem 0.9rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .note-input:focus { border-color: var(--gold); }
+    .note-input::placeholder { color: var(--muted); opacity: 0.5; }
+    .note-count { font-size: 0.68rem; color: var(--muted); opacity: 0.55; text-align: right; margin-top: 0.3rem; }
+
+    /* Eingegangene Texte */
+    .note-row {
+      border-bottom: 1px solid var(--border);
+      padding: 0.7rem 0;
+    }
+    .note-row:last-child { border-bottom: none; }
+    .note-text {
+      font-size: 0.82rem; line-height: 1.6; color: var(--text);
+      white-space: pre-wrap; word-break: break-word;
+      max-height: 11rem; overflow-y: auto;
+    }
+    .note-text a { color: var(--gold); }
+    .note-tools {
+      display: flex; align-items: center; gap: 0.8rem;
+      margin-top: 0.45rem; font-size: 0.7rem; color: var(--muted);
+    }
+    .note-tools button {
+      background: none; border: none; padding: 0;
+      color: var(--gold); font-family: 'DM Sans', sans-serif;
+      font-size: 0.7rem; cursor: pointer;
+    }
+    .note-tools button:hover { color: var(--gold-light); text-decoration: underline; }
+    .note-tools .danger { color: var(--muted); }
+    .note-tools .danger:hover { color: var(--error); }
+    .file-row .danger {
+      background: none; border: none; padding: 0; cursor: pointer;
+      color: var(--muted); font-size: 0.7rem; font-family: 'DM Sans', sans-serif;
+    }
+    .file-row .danger:hover { color: var(--error); }
+
+    /* Auf dem Handy sind die Zeilen der Listen sonst 15 px hoch und kaum zu
+       treffen. Die Schrift bleibt gleich, nur die Tippfläche wächst. */
+    @media (max-width: 640px) {
+      body { padding: 1.25rem; }
+      header { margin-bottom: 2rem; }
+
+      .file-row { padding: 0; gap: 0.6rem; }
+      .file-row a,
+      .file-row .danger,
+      .note-tools button {
+        padding-top: 0.7rem;
+        padding-bottom: 0.7rem;
+      }
+      .note-tools { gap: 1.2rem; }
+
+      /* iOS zoomt in jedes Feld mit weniger als 16 px Schrift hinein. */
+      .note-input, .pw-input { font-size: 16px; }
+    }
   </style>
 </head>
 <body>
@@ -342,6 +412,14 @@
   </div>
 
   <div id="preview-grid"></div>
+
+  <div class="note-area">
+    <textarea class="note-input" id="note-input"
+              placeholder="… oder Text und Links hier einfügen"
+              aria-label="Text oder Links einfügen"></textarea>
+    <p class="note-count" id="note-count"></p>
+  </div>
+
   <div id="progress-area"></div>
 
   <button class="upload-btn" id="upload-btn" disabled>Senden</button>
@@ -367,12 +445,17 @@
     <p class="limit-info" id="limit-info">Limit wird geladen…</p>
   </div>
 
+  <section class="files" id="notes-box">
+    <h2>Texte &amp; Links</h2>
+    <div id="notes-list"></div>
+  </section>
+
   <section class="files" id="files">
-    <h2>Zuletzt angekommen</h2>
+    <h2>Dateien</h2>
     <div id="files-list"></div>
   </section>
 
-  <footer>Übertragung per HTTPS. Die Dateien liegen in privatem Cloudflare-Speicher.</footer>
+  <footer id="footer">Übertragung per HTTPS. Die Dateien liegen in privatem Cloudflare-Speicher.</footer>
 </div>
 
 <div id="toast"></div>
@@ -399,6 +482,13 @@
   const toast        = document.getElementById('toast');
   const limitInfo    = document.getElementById('limit-info');
   const dropHint     = document.getElementById('drop-hint');
+  const noteInput    = document.getElementById('note-input');
+  const noteCount    = document.getElementById('note-count');
+
+  // Der Senden-Knopf gilt für beides: ausgewählte Dateien und eingefügten Text.
+  const refreshSendButton = () => {
+    uploadBtn.disabled = selected.length === 0 && !noteInput.value.trim();
+  };
 
   const authHeaders = () => (session ? { Authorization: 'Bearer ' + session } : {});
 
@@ -437,6 +527,8 @@
     }
 
     dropHint.textContent = `Alle Dateitypen · Max. ${formatBytes(limits.maxFileBytes)} pro Datei`;
+    document.getElementById('footer').textContent =
+      `Übertragung per HTTPS. Dateien werden nach ${limits.retentionDays} Tagen automatisch gelöscht.`;
 
     if (limits.elevated) {
       document.getElementById('pw-toggle').style.display = 'none';
@@ -444,6 +536,7 @@
       document.getElementById('pw-badge').classList.add('visible');
       limitInfo.innerHTML = `Aktuelles Limit: <span class="unlocked">${formatBytes(limits.maxFileBytes)}</span> pro Datei`;
       loadFiles();
+      loadNotes();
     } else {
       limitInfo.innerHTML =
         `Aktuelles Limit: <span>${formatBytes(limits.maxFileBytes)}</span> pro Datei · ` +
@@ -511,6 +604,13 @@
 
   // ── Dateiliste (nur freigeschaltet) ────────────────────────────────────────
 
+  function emptyHint(list, text) {
+    const p = document.createElement('p');
+    p.className = 'files-empty';
+    p.textContent = text;
+    list.appendChild(p);
+  }
+
   async function loadFiles() {
     const box  = document.getElementById('files');
     const list = document.getElementById('files-list');
@@ -520,29 +620,127 @@
       const { files } = await res.json();
 
       list.textContent = '';
-      if (!files.length) {
-        const p = document.createElement('p');
-        p.className = 'files-empty';
-        p.textContent = 'Noch nichts da.';
-        list.appendChild(p);
-      }
+      if (!files.length) emptyHint(list, 'Noch nichts da.');
+
       for (const f of files) {
         const row = document.createElement('div');
         row.className = 'file-row';
+
         const a = document.createElement('a');
         // Kein innerHTML: der Dateiname stammt vom Absender.
         a.textContent = f.name;
         a.title = f.name;
         a.href = '/api/files/download?key=' + encodeURIComponent(f.key);
+        a.setAttribute('download', f.name);
+
         const meta = document.createElement('span');
         meta.className = 'meta';
         meta.textContent = `${formatBytes(f.size)} · ${new Date(f.uploadedAt).toLocaleDateString('de-DE')}`;
-        row.append(a, meta);
+
+        const del = document.createElement('button');
+        del.className = 'danger';
+        del.type = 'button';
+        del.textContent = 'löschen';
+        del.onclick = async () => {
+          if (!confirm(`„${f.name}“ endgültig löschen?`)) return;
+          try {
+            const r = await fetch('/api/files?key=' + encodeURIComponent(f.key), {
+              method: 'DELETE', headers: authHeaders(),
+            });
+            if (!r.ok) throw new Error();
+            loadFiles();
+          } catch { showToast('Löschen fehlgeschlagen', 'error'); }
+        };
+
+        row.append(a, meta, del);
         list.appendChild(row);
       }
       box.classList.add('visible');
     } catch {
       // Liste ist Beiwerk – ein Fehler hier soll das Hochladen nicht stören.
+    }
+  }
+
+  // Baut aus reinem Text Knoten und macht dabei http(s)-Adressen anklickbar.
+  // Bewusst über DOM-Knoten und nicht über innerHTML: der Text kommt von
+  // fremden Leuten. Andere Schemata – allen voran javascript: – bleiben Text.
+  function linkify(text) {
+    const frag = document.createDocumentFragment();
+    const re = /https?:\/\/[^\s<>"']+/g;
+    let last = 0, m;
+    while ((m = re.exec(text)) !== null) {
+      if (m.index > last) frag.append(text.slice(last, m.index));
+      const a = document.createElement('a');
+      a.href = m[0];
+      a.textContent = m[0];
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      frag.appendChild(a);
+      last = m.index + m[0].length;
+    }
+    if (last < text.length) frag.append(text.slice(last));
+    return frag;
+  }
+
+  async function loadNotes() {
+    const box  = document.getElementById('notes-box');
+    const list = document.getElementById('notes-list');
+    try {
+      const res = await fetch('/api/notes', { headers: authHeaders() });
+      if (!res.ok) return;
+      const { notes } = await res.json();
+
+      list.textContent = '';
+      if (!notes.length) emptyHint(list, 'Noch nichts da.');
+
+      for (const n of notes) {
+        const row = document.createElement('div');
+        row.className = 'note-row';
+
+        const body = document.createElement('div');
+        body.className = 'note-text';
+        body.appendChild(linkify(n.text));
+
+        const tools = document.createElement('div');
+        tools.className = 'note-tools';
+
+        const when = document.createElement('span');
+        when.textContent = new Date(n.createdAt).toLocaleString('de-DE',
+          { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+
+        const copy = document.createElement('button');
+        copy.type = 'button';
+        copy.textContent = 'kopieren';
+        copy.onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(n.text);
+            copy.textContent = 'kopiert ✓';
+            setTimeout(() => { copy.textContent = 'kopieren'; }, 1500);
+          } catch {
+            showToast('Zwischenablage nicht verfügbar', 'error');
+          }
+        };
+
+        const del = document.createElement('button');
+        del.type = 'button';
+        del.className = 'danger';
+        del.textContent = 'löschen';
+        del.onclick = async () => {
+          try {
+            await fetch('/api/notes?id=' + encodeURIComponent(n.id), {
+              method: 'DELETE', headers: authHeaders(),
+            });
+            loadNotes();
+          } catch { showToast('Löschen fehlgeschlagen', 'error'); }
+        };
+
+        tools.append(when, copy, del);
+        row.append(body, tools);
+        list.appendChild(row);
+      }
+      box.classList.add('visible');
+    } catch {
+      // s. o.
     }
   }
 
@@ -585,8 +783,16 @@
     }
 
     renderPreviews();
-    uploadBtn.disabled = selected.length === 0;
+    refreshSendButton();
   }
+
+  noteInput.addEventListener('input', () => {
+    const max = limits?.maxNoteChars ?? 20000;
+    if (noteInput.value.length > max) noteInput.value = noteInput.value.slice(0, max);
+    const n = noteInput.value.length;
+    noteCount.textContent = n ? `${n.toLocaleString('de-DE')} / ${max.toLocaleString('de-DE')} Zeichen` : '';
+    refreshSendButton();
+  });
 
   function fileIcon(f) {
     if (f.type.startsWith('image/')) return null;
@@ -637,7 +843,7 @@
       btn.onclick = () => {
         selected = selected.filter(f => f !== file);
         renderPreviews();
-        uploadBtn.disabled = !selected.length;
+        refreshSendButton();
       };
       thumb.appendChild(btn);
 
@@ -654,10 +860,26 @@
   // ── Senden ─────────────────────────────────────────────────────────────────
 
   uploadBtn.addEventListener('click', async () => {
-    if (!selected.length) return;
+    const note = noteInput.value.trim();
+    if (!selected.length && !note) return;
+
     uploadBtn.disabled = true;
     progressArea.style.display = 'block';
     progressArea.textContent = '';
+
+    // Erst der Text – der ist in einem Rutsch durch und wäre sonst nach einem
+    // langen Datei-Upload immer noch nicht abgeschickt.
+    let noteFailed = false;
+    if (note) {
+      try {
+        await api('/api/note', { text: note });
+        noteInput.value = '';
+        noteCount.textContent = '';
+      } catch (err) {
+        noteFailed = true;
+        showToast(err.message, 'error');
+      }
+    }
 
     // Fehlgeschlagene Dateien bleiben ausgewählt, damit ein zweiter Klick
     // reicht, statt alles neu heraussuchen zu müssen.
@@ -669,12 +891,13 @@
     selected = failed;
     fileInput.value = '';
     renderPreviews();
-    uploadBtn.disabled = !selected.length;
+    refreshSendButton();
 
-    showToast(
-      failed.length ? `${failed.length} Datei(en) nicht angekommen – nochmal senden?` : 'Alles angekommen!',
-      failed.length ? 'error' : 'success',
-    );
+    if (failed.length) {
+      showToast(`${failed.length} Datei(en) nicht angekommen – nochmal senden?`, 'error');
+    } else if (!noteFailed) {
+      showToast('Alles angekommen!', 'success');
+    }
 
     loadStatus();
   });

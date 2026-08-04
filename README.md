@@ -19,7 +19,7 @@ npm run deploy              # von Hand nach upload.veerka.mp
 | `src/index.js`       | die API: Limits, Kontingent, Upload, Dateiliste        |
 | `src/crypto.js`      | TOTP nach RFC 6238 und signierte Sitzungstoken         |
 | `schema.sql`         | Tabellen für D1                                        |
-| `tools/test-api.mjs` | 26 Tests, vor allem gegen Umgehungsversuche            |
+| `tools/test-api.mjs` | 35 Tests, vor allem gegen Umgehungsversuche            |
 | `TEXT_INPUT_FEATURE.md` | Notiz zu einer noch nicht gebauten Idee            |
 
 ## Wie ein Upload läuft
@@ -36,6 +36,19 @@ echten Fortschritt in Prozent. (Beim alten Weg über Google Apps Script ging
 das nicht: ein Listener darauf erzwingt einen CORS-Preflight, den Apps Script
 nicht beantwortet.)
 
+## Text und Links
+
+Neben Dateien gibt es ein Textfeld. Der Inhalt landet **nicht** als Datei in
+R2, sondern direkt in D1 – dadurch steht er in der Liste sofort lesbar da und
+lässt sich mit einem Tipp kopieren, ohne vorher etwas herunterzuladen. Genau
+das war der Sinn der Sache: unterwegs schnell an eine Adresse oder einen Link
+kommen.
+
+Beim Anzeigen werden `http(s)`-Adressen anklickbar gemacht, alles andere
+bleibt Text. Der Aufbau läuft über DOM-Knoten, nie über `innerHTML` – sonst
+wäre ein eingefügtes `<script>` ein Einfallstor, und `javascript:`-Adressen
+würden anklickbar.
+
 ## Limits
 
 |                        | ohne Code | mit 2FA-Code |
@@ -43,8 +56,20 @@ nicht beantwortet.)
 | pro Datei              | 50 MB     | 10 GB        |
 | Dateien pro 24 h       | 50        | unbegrenzt   |
 | davon pro Absender-IP  | 30        | –            |
+| Texte pro 24 h         | 20        | unbegrenzt   |
+| Zeichen pro Text       | 20 000    | 20 000       |
 
 Die Zahlen stehen als `LIMITS` oben in `src/index.js`.
+
+## Aufräumen
+
+Ein Cron-Lauf um 4:07 UTC löscht Dateien, die älter als 14 Tage sind, aus R2
+und aus der Datenbank; Texte bleiben 90 Tage. Beides steht in `LIMITS` als
+`fileRetentionDays` und `noteRetentionDays`. In der Liste lässt sich außerdem
+alles einzeln von Hand löschen.
+
+Das ist keine Kosmetik: R2 rechnet nach liegendem Speicher ab. Ohne das
+Aufräumen bliebe jede jemals geschickte Datei für immer liegen.
 
 Gezählt werden **begonnene** Uploads, nicht nur fertige – sonst könnte jemand
 tausende gleichzeitig starten und die Zählung liefe hinterher. Angefangene,

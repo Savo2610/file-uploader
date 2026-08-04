@@ -49,3 +49,15 @@ CREATE TABLE IF NOT EXISTS auth_attempts (
 
 CREATE INDEX IF NOT EXISTS auth_attempts_at ON auth_attempts (at);
 CREATE INDEX IF NOT EXISTS auth_attempts_ip ON auth_attempts (ip, at);
+
+-- Eingefügter Text und Links. Bewusst direkt in der Datenbank und nicht als
+-- Datei in R2: so lässt sich der Inhalt auf dem Handy sofort lesen und
+-- kopieren, ohne vorher etwas herunterzuladen.
+CREATE TABLE IF NOT EXISTS notes (
+  id         TEXT PRIMARY KEY,
+  text       TEXT NOT NULL,
+  created_at INTEGER NOT NULL,
+  ip         TEXT
+);
+
+CREATE INDEX IF NOT EXISTS notes_created_at ON notes (created_at);

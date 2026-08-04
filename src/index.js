@@ -25,6 +25,15 @@ const LIMITS = {
   // Fehlversuche bei der Freischaltung, bevor die IP für eine Stunde gesperrt
   // wird. Ohne das ließen sich 6 Stellen in überschaubarer Zeit durchprobieren.
   maxAuthFailuresPerHour: 10,
+
+  // Eingefügter Text: Länge und Stückzahl pro Tag.
+  maxNoteChars: 20_000,
+  anonMaxNotesPerDay: 20,
+
+  // Nach so vielen Tagen räumt der nächtliche Lauf auf. R2 rechnet nach
+  // liegendem Speicher ab – was weg ist, kostet nichts mehr.
+  fileRetentionDays: 14,
+  noteRetentionDays: 90,
 };
 
 // Größe eines Teilstücks beim Hochladen. Jedes Teil geht als eigene Anfrage
@@ -148,7 +157,60 @@ async function handleStatus(request, env) {
     filesPerDay: LIMITS.anonMaxFilesPerDay,
     filesRemainingToday: elevated ? null : Math.max(0, LIMITS.anonMaxFilesPerDay - (used?.n ?? 0)),
     twoFactorConfigured: Boolean(env.TOTP_SECRET && env.SESSION_SECRET),
+    maxNoteChars: LIMITS.maxNoteChars,
+    retentionDays: LIMITS.fileRetentionDays,
   });
+}
+
+// ── Route: Text und Links ───────────────────────────────────────────────────
+
+async function handleNote(request, env) {
+  let body;
+  try { body = await request.json(); } catch { return fail(400, 'Ungültige Anfrage.'); }
+
+  const text = String(body?.text ?? '').trim();
+  if (!text) return fail(400, 'Kein Text angekommen.');
+  if (text.length > LIMITS.maxNoteChars) {
+    return fail(413, `Der Text ist zu lang (max. ${LIMITS.maxNoteChars} Zeichen).`);
+  }
+
+  const ip = clientIp(request);
+  const now = Date.now();
+
+  if (!(await isElevated(request, env))) {
+    const used = await env.DB
+      .prepare('SELECT COUNT(*) AS n FROM notes WHERE created_at > ?')
+      .bind(now - DAY_MS)
+      .first();
+    if ((used?.n ?? 0) >= LIMITS.anonMaxNotesPerDay) {
+      return fail(429, 'Heute wurden schon viele Texte geschickt. Morgen wieder.');
+    }
+  }
+
+  await env.DB
+    .prepare('INSERT INTO notes (id, text, created_at, ip) VALUES (?, ?, ?, ?)')
+    .bind(randomToken(9), text, now, ip)
+    .run();
+
+  return json({ ok: true });
+}
+
+async function handleNotesList(request, env) {
+  if (!(await isElevated(request, env))) return fail(401, 'Nicht freigeschaltet.');
+
+  const rows = await env.DB
+    .prepare('SELECT id, text, created_at FROM notes ORDER BY created_at DESC LIMIT 100')
+    .all();
+
+  return json({
+    notes: (rows.results ?? []).map(r => ({ id: r.id, text: r.text, createdAt: r.created_at })),
+  });
+}
+
+async function handleNoteDelete(request, env, url) {
+  if (!(await isElevated(request, env))) return fail(401, 'Nicht freigeschaltet.');
+  await env.DB.prepare('DELETE FROM notes WHERE id = ?').bind(url.searchParams.get('id') || '').run();
+  return json({ ok: true });
 }
 
 // ── Route: Freischalten ─────────────────────────────────────────────────────
@@ -418,6 +480,49 @@ async function handleDownload(request, env, url) {
   });
 }
 
+async function handleFileDelete(request, env, url) {
+  if (!(await isElevated(request, env))) return fail(401, 'Nicht freigeschaltet.');
+
+  const key = url.searchParams.get('key') || '';
+  const row = await env.DB
+    .prepare('SELECT r2_key FROM uploads WHERE r2_key = ? AND completed_at IS NOT NULL')
+    .bind(key)
+    .first();
+  if (!row) return fail(404, 'Datei nicht gefunden.');
+
+  await env.BUCKET.delete(key);
+  await env.DB.prepare('DELETE FROM uploads WHERE r2_key = ?').bind(key).run();
+  return json({ ok: true });
+}
+
+// ── Nächtlicher Aufräumlauf ─────────────────────────────────────────────────
+//
+// R2 rechnet nach liegendem Speicher ab. Ohne das hier bliebe jede jemals
+// geschickte Datei für immer liegen und würde ab dem 11. GB Geld kosten.
+
+async function purgeOld(env) {
+  const now = Date.now();
+  const fileCutoff = now - LIMITS.fileRetentionDays * DAY_MS;
+
+  const old = await env.DB
+    .prepare('SELECT r2_key FROM uploads WHERE completed_at IS NOT NULL AND completed_at < ?')
+    .bind(fileCutoff)
+    .all();
+
+  const keys = (old.results ?? []).map(r => r.r2_key);
+  // R2 nimmt bis zu 1000 Schlüssel auf einmal.
+  for (let i = 0; i < keys.length; i += 1000) {
+    await env.BUCKET.delete(keys.slice(i, i + 1000));
+  }
+
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM uploads WHERE completed_at IS NOT NULL AND completed_at < ?').bind(fileCutoff),
+    env.DB.prepare('DELETE FROM notes WHERE created_at < ?').bind(now - LIMITS.noteRetentionDays * DAY_MS),
+  ]);
+
+  return keys.length;
+}
+
 // ── Verteiler ───────────────────────────────────────────────────────────────
 
 export default {
@@ -432,6 +537,7 @@ export default {
     }
 
     const post = request.method === 'POST';
+    const del  = request.method === 'DELETE';
     try {
       if (path === '/api/status'          && request.method === 'GET') return await handleStatus(request, env);
       if (path === '/api/unlock'          && post)                     return await handleUnlock(request, env);
@@ -440,11 +546,24 @@ export default {
       if (path === '/api/upload/complete' && post)                     return await handleComplete(request, env);
       if (path === '/api/upload/abort'    && post)                     return await handleAbort(request, env);
       if (path === '/api/files'           && request.method === 'GET') return await handleList(request, env);
+      if (path === '/api/files'           && del)                      return await handleFileDelete(request, env, url);
       if (path === '/api/files/download'  && request.method === 'GET') return await handleDownload(request, env, url);
+      if (path === '/api/note'            && post)                     return await handleNote(request, env);
+      if (path === '/api/notes'           && request.method === 'GET') return await handleNotesList(request, env);
+      if (path === '/api/notes'           && del)                      return await handleNoteDelete(request, env, url);
       return fail(404, 'Unbekannte Route.');
     } catch (err) {
       console.error(path, err?.stack || err);
       return fail(500, 'Serverfehler.');
     }
+  },
+
+  // Läuft nach dem Zeitplan aus wrangler.jsonc.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil((async () => {
+      const removed = await purgeOld(env);
+      await cleanup(env);
+      console.log(`Aufräumlauf: ${removed} Datei(en) gelöscht.`);
+    })());
   },
 };

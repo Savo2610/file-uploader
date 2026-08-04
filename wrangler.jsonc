@@ -30,5 +30,10 @@
     }
   ],
 
+  // Nächtlicher Aufräumlauf: löscht Dateien, die älter als die Aufbewahrungs-
+  // frist in src/index.js sind. 4:07 UTC, damit es nicht zur vollen Stunde
+  // gemeinsam mit allen anderen Cron-Jobs der Welt losgeht.
+  "triggers": { "crons": ["7 4 * * *"] },
+
   "observability": { "enabled": true }
 }

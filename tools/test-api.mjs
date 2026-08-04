@@ -210,6 +210,57 @@ const stored = listAfter.files.find(f => f.name.includes('img src'));
 check('gespeicherter Schlüssel enthält kein ..',
   Boolean(stored) && !stored.key.includes('..'), stored?.key);
 
+console.log('\nText und Links');
+
+const noteRes = await post('/api/note', { text: 'Schau mal: https://example.com/foo?a=1\nUnd noch eine Zeile.' });
+check('Text ohne Freischaltung annehmbar', noteRes.status === 200, 'HTTP ' + noteRes.status);
+
+const emptyNote = await post('/api/note', { text: '   ' });
+check('leerer Text abgelehnt', emptyNote.status === 400, 'HTTP ' + emptyNote.status);
+
+const longNote = await post('/api/note', { text: 'x'.repeat(25_000) });
+check('zu langer Text abgelehnt', longNote.status === 413, 'HTTP ' + longNote.status);
+
+const notesAnon = await fetch(BASE + '/api/notes');
+check('Textliste ohne Freischaltung gesperrt', notesAnon.status === 401, 'HTTP ' + notesAnon.status);
+
+const notes = await (await fetch(BASE + '/api/notes', {
+  headers: { Authorization: 'Bearer ' + token },
+})).json();
+check('Text kommt unverändert zurück',
+  notes.notes?.[0]?.text.includes('https://example.com/foo?a=1'),
+  JSON.stringify(notes.notes?.[0]).slice(0, 100));
+
+console.log('\nLöschen');
+
+const delAnon = await fetch(BASE + '/api/notes?id=' + encodeURIComponent(notes.notes[0].id), { method: 'DELETE' });
+check('Text löschen ohne Freischaltung gesperrt', delAnon.status === 401, 'HTTP ' + delAnon.status);
+
+const delNote = await fetch(BASE + '/api/notes?id=' + encodeURIComponent(notes.notes[0].id), {
+  method: 'DELETE', headers: { Authorization: 'Bearer ' + token },
+});
+const notesAfter = await (await fetch(BASE + '/api/notes', {
+  headers: { Authorization: 'Bearer ' + token },
+})).json();
+check('Text ist danach weg',
+  delNote.status === 200 && !notesAfter.notes.some(n => n.id === notes.notes[0].id));
+
+const victim = (await (await fetch(BASE + '/api/files', {
+  headers: { Authorization: 'Bearer ' + token },
+})).json()).files.find(f => f.name === 'mittel.bin');
+
+const delFileAnon = await fetch(BASE + '/api/files?key=' + encodeURIComponent(victim.key), { method: 'DELETE' });
+check('Datei löschen ohne Freischaltung gesperrt', delFileAnon.status === 401, 'HTTP ' + delFileAnon.status);
+
+const delFile = await fetch(BASE + '/api/files?key=' + encodeURIComponent(victim.key), {
+  method: 'DELETE', headers: { Authorization: 'Bearer ' + token },
+});
+const gone = await fetch(BASE + '/api/files/download?key=' + encodeURIComponent(victim.key), {
+  headers: { Authorization: 'Bearer ' + token },
+});
+check('Datei ist danach auch aus R2 weg', delFile.status === 200 && gone.status === 404,
+  `löschen ${delFile.status}, danach ${gone.status}`);
+
 console.log('\nTageskontingent');
 
 const statusNow = await (await fetch(BASE + '/api/status')).json();
