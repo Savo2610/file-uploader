@@ -50,6 +50,11 @@ function totp(secret, offsetSteps = 0) {
   return String(bin % 1_000_000).padStart(6, '0');
 }
 
+// Jeder Dateiname aus diesem Lauf trägt dieses Präfix. tools/cleanup-tests.mjs
+// löscht ausschließlich Dateien, die so heißen – damit ein Aufräumen niemals
+// echte Uploads erwischt.
+export const TEST_PREFIX = 'TESTLAUF-';
+
 // ── Testgerüst ──────────────────────────────────────────────────────────────
 
 let passed = 0, failed = 0;
@@ -68,7 +73,7 @@ const post = (path, body, token, base = UP) => fetch(base + path, {
 // Lädt einen Puffer komplett hoch und gibt die Antwort von /complete zurück.
 async function upload(buf, fileName, token) {
   const init = await post('/api/upload/init', {
-    fileName, size: buf.length, contentType: 'application/octet-stream',
+    fileName: TEST_PREFIX + fileName, size: buf.length, contentType: 'application/octet-stream',
   }, token);
   if (!init.ok) return { failedAt: 'init', status: init.status, body: await init.json() };
 
@@ -106,14 +111,14 @@ check('leere Datei', r3.failedAt === null, JSON.stringify(r3.body));
 console.log('\nLimits – der Browser darf nicht entscheiden');
 
 const initTooBig = await post('/api/upload/init', {
-  fileName: 'zu-gross.bin', size: 60 * 1024 * 1024, contentType: 'application/octet-stream',
+  fileName: TEST_PREFIX + 'zu-gross.bin', size: 60 * 1024 * 1024, contentType: 'application/octet-stream',
 });
 check('60 MB ohne Freischaltung abgelehnt', initTooBig.status === 413,
   'HTTP ' + initTooBig.status);
 
 // Kleine Größe anmelden, dann mehr Daten nachschieben.
 const lie = await post('/api/upload/init', {
-  fileName: 'luegner.bin', size: 1024, contentType: 'application/octet-stream',
+  fileName: TEST_PREFIX + 'luegner.bin', size: 1024, contentType: 'application/octet-stream',
 });
 const { upload: lieTicket } = await lie.json();
 const overflow = await fetch(`${UP}/api/upload/part?upload=${encodeURIComponent(lieTicket)}&part=1`, {
@@ -180,13 +185,13 @@ check('Status meldet 10 GB', statusUp.elevated && statusUp.maxFileBytes === 10 *
   JSON.stringify(statusUp));
 
 const initHuge = await post('/api/upload/init', {
-  fileName: 'riesig.bin', size: 8 * 1024 ** 3, contentType: 'application/octet-stream',
+  fileName: TEST_PREFIX + 'riesig.bin', size: 8 * 1024 ** 3, contentType: 'application/octet-stream',
 }, token);
 check('8 GB mit Freischaltung angenommen', initHuge.status === 200, 'HTTP ' + initHuge.status);
 if (initHuge.status === 200) await post('/api/upload/abort', { upload: (await initHuge.json()).upload });
 
 const initTooHuge = await post('/api/upload/init', {
-  fileName: 'zu-riesig.bin', size: 11 * 1024 ** 3, contentType: 'application/octet-stream',
+  fileName: TEST_PREFIX + 'zu-riesig.bin', size: 11 * 1024 ** 3, contentType: 'application/octet-stream',
 }, token);
 check('11 GB auch mit Freischaltung abgelehnt', initTooHuge.status === 413, 'HTTP ' + initTooHuge.status);
 
@@ -200,7 +205,7 @@ const list = await (await fetch(DL + '/api/files', {
 })).json();
 check('Liste enthält die Uploads', list.files?.length >= 3, JSON.stringify(list).slice(0, 120));
 
-const first = list.files.find(f => f.name === 'klein.txt');
+const first = list.files.find(f => f.name === TEST_PREFIX + 'klein.txt');
 const dl = await fetch(DL + '/api/files/download?key=' + encodeURIComponent(first.key), {
   headers: { Authorization: 'Bearer ' + token },
 });
@@ -270,7 +275,7 @@ check('Text ist danach weg',
 
 const victim = (await (await fetch(DL + '/api/files', {
   headers: { Authorization: 'Bearer ' + token },
-})).json()).files.find(f => f.name === 'mittel.bin');
+})).json()).files.find(f => f.name === TEST_PREFIX + 'mittel.bin');
 
 const delFileAnon = await fetch(DL + '/api/files?key=' + encodeURIComponent(victim.key), { method: 'DELETE' });
 check('Datei löschen ohne Freischaltung gesperrt', delFileAnon.status === 401, 'HTTP ' + delFileAnon.status);
@@ -301,7 +306,7 @@ const notesOnUpload = await fetch(UP + '/api/notes', { headers: { Authorization:
 check('Textliste auf der Upload-Seite nicht vorhanden', notesOnUpload.status === 404, 'HTTP ' + notesOnUpload.status);
 
 const initOnDownload = await post('/api/upload/init', {
-  fileName: 'x.txt', size: 10, contentType: 'text/plain',
+  fileName: TEST_PREFIX + 'x.txt', size: 10, contentType: 'text/plain',
 }, token, DL);
 check('Hochladen auf der Abhol-Seite nicht vorhanden', initOnDownload.status === 404,
   'HTTP ' + initOnDownload.status);

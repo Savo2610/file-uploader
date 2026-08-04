@@ -2,7 +2,10 @@
   "name": "file-uploader",
   "private": true,
   "scripts": {
-    "dev": "wrangler dev",
+    "dev": "wrangler dev --port 8788",
+    "dev:download": "wrangler dev --port 8789 --host download.veerka.mp",
+    "test": "node tools/test-api.mjs",
+    "cleanup": "node tools/cleanup-tests.mjs",
     "deploy": "wrangler deploy"
   },
   "devDependencies": {

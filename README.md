@@ -17,11 +17,20 @@ nicht mit gültigem Sitzungstoken.
 
 ```bash
 # Beide Seiten einzeln starten – siehe Kommentar in tools/test-api.mjs
-npx wrangler dev --port 8788
-npx wrangler dev --port 8789 --host download.veerka.mp
+npm run dev            # upload.veerka.mp   auf :8788
+npm run dev:download   # download.veerka.mp auf :8789
 
-node tools/test-api.mjs     # End-to-End-Test gegen beide
-npm run deploy              # von Hand veröffentlichen
+npm test               # 43 End-to-End-Tests gegen beide
+npm run cleanup        # Testdateien wieder wegräumen
+npm run deploy         # von Hand veröffentlichen
+```
+
+Gegen die echte Seite laufen die Tests auch – dann legen sie dort aber
+Dateien an:
+
+```bash
+UPLOAD_BASE=https://upload.veerka.mp DOWNLOAD_BASE=https://download.veerka.mp npm test
+node tools/cleanup-tests.mjs --remote
 ```
 
 ## Struktur
@@ -36,6 +45,7 @@ npm run deploy              # von Hand veröffentlichen
 | `src/crypto.js`      | TOTP nach RFC 6238 und signierte Sitzungstoken         |
 | `schema.sql`         | Tabellen für D1                                        |
 | `tools/test-api.mjs` | 43 Tests, vor allem gegen Umgehungsversuche            |
+| `tools/cleanup-tests.mjs` | räumt nur die Testdateien weg, nichts sonst      |
 | `TEXT_INPUT_FEATURE.md` | Notiz zu einer noch nicht gebauten Idee            |
 
 ## Wie ein Upload läuft
@@ -81,6 +91,16 @@ Gezählt werden **begonnene** Uploads, nicht nur fertige – sonst könnte jeman
 tausende gleichzeitig starten und die Zählung liefe hinterher. Angefangene,
 nie beendete Uploads werden nach 24 Stunden aufgeräumt und geben ihren Platz
 wieder frei.
+
+## Testdateien
+
+Jede Datei, die `tools/test-api.mjs` anlegt, heißt `TESTLAUF-…`, und
+`tools/cleanup-tests.mjs` löscht ausschließlich solche. Alles andere listet es
+auf und fasst es nicht an.
+
+Das ist kein Übereifer: ein pauschales „Bucket leeren“ nach einem Testlauf hat
+hier schon einmal einen echten Upload mitgenommen, und R2 hat keine
+Versionierung – weg ist weg.
 
 ## Aufräumen
 
