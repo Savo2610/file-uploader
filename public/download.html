@@ -7,6 +7,17 @@
   <meta name="theme-color" content="#0f0e0c">
   <meta name="robots" content="noindex, nofollow">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%93%A5%3C/text%3E%3C/svg%3E">
+
+  <!-- Damit auf dem Startbildschirm das eigene Symbol steht und nicht das
+       Chrome-Logo: Android baut nur mit Manifest und Service Worker eine echte
+       App daraus, sonst bleibt es eine Verknüpfung mit Browser-Abzeichen. -->
+  <link rel="manifest" href="/download.webmanifest">
+  <link rel="apple-touch-icon" href="/icons/abholen-apple-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Abholen">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="mobile-web-app-capable" content="yes">
+
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
@@ -19,6 +30,17 @@
     #inhalt { display: none; }
     #inhalt.visible { display: block; }
     .files { display: block; }
+
+    /* Abmelden gehört ins Kleingedruckte: gebraucht wird es selten, aber es
+       muss erreichbar sein – das Cookie kann die Seite selbst nicht löschen. */
+    #abmelden {
+      background: none; border: 0; padding: 0;
+      color: var(--muted); font: inherit; font-size: inherit;
+      text-decoration: underline; text-underline-offset: 3px;
+      cursor: pointer; opacity: 0.8;
+    }
+    #abmelden:hover { color: var(--gold); }
+    #footer .trenner { opacity: 0.4; margin: 0 0.5rem; }
   </style>
 </head>
 <body>
@@ -52,15 +74,39 @@
     </section>
   </div>
 
-  <footer id="footer"></footer>
+  <footer id="footer">
+    <span id="footer-text"></span>
+  </footer>
 </div>
 
 <div id="toast"></div>
 
 <script>
-  // Das Token hält nur, solange der Tab offen ist – danach wieder ein Code.
-  let session = sessionStorage.getItem('download-session') || null;
+  // Das Token liegt im localStorage und überlebt damit das Schließen des Tabs.
+  // Das ist der Unterschied zur Upload-Seite: dort steht man vor einem fremden
+  // Gerät, hier vor dem eigenen. Der Server gibt der Abhol-Sitzung dafür eine
+  // Laufzeit von 30 Tagen und verlängert sie bei jedem Öffnen – wer die App
+  // benutzt, wird nie wieder nach einem Code gefragt.
+  //
+  // Das Token ist damit ein Schlüssel, der auf dem Gerät liegen bleibt. Genau
+  // dafür gibt es unten „abmelden“, und genau deshalb bleibt der 2FA-Code der
+  // einzige Weg, überhaupt einen zu bekommen.
+  const SPEICHER = 'download-session';
+
+  let session = localStorage.getItem(SPEICHER) || null;
   let limits  = null;
+
+  function merken(token) {
+    session = token;
+    try { localStorage.setItem(SPEICHER, token); } catch { /* privater Modus */ }
+  }
+
+  function vergessen() {
+    session = null;
+    try { localStorage.removeItem(SPEICHER); } catch { /* egal */ }
+    // Das Cookie für die Download-Links ist HttpOnly, das muss der Server tun.
+    fetch('/api/logout', { method: 'POST' }).catch(() => {});
+  }
 
   const toast      = document.getElementById('toast');
   const codeInput  = document.getElementById('code-input');
@@ -112,13 +158,13 @@
       const res  = await fetch('/api/unlock', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code }),
+        // Hier – und nur hier – wird um die lange Sitzung gebeten.
+        body: JSON.stringify({ code, remember: true }),
       });
       const data = await res.json();
 
       if (res.ok && data.token) {
-        session = data.token;
-        sessionStorage.setItem('download-session', session);
+        merken(data.token);
         codeInput.value = '';
         oeffnen();
       } else {
@@ -140,8 +186,32 @@
     document.getElementById('gate').style.display = 'none';
     document.getElementById('inhalt').classList.add('visible');
     document.getElementById('untertitel').textContent = 'Alles, was bei mir angekommen ist.';
+    zeigeAbmelden();
     loadFiles();
     loadNotes();
+  }
+
+  function zeigeAbmelden() {
+    if (document.getElementById('abmelden-box')) return;
+
+    const box = document.createElement('span');
+    box.id = 'abmelden-box';
+
+    const trenner = document.createElement('span');
+    trenner.className = 'trenner';
+    trenner.textContent = '·';
+
+    const knopf = document.createElement('button');
+    knopf.id = 'abmelden';
+    knopf.type = 'button';
+    knopf.textContent = 'abmelden';
+    knopf.onclick = () => {
+      vergessen();
+      location.reload();
+    };
+
+    box.append(trenner, knopf);
+    document.getElementById('footer').appendChild(box);
   }
 
   // ── Dateien ────────────────────────────────────────────────────────────────
@@ -279,14 +349,19 @@
   }
 
   function abgelaufen() {
-    session = null;
-    sessionStorage.removeItem('download-session');
+    vergessen();
     document.getElementById('gate').style.display = '';
     document.getElementById('inhalt').classList.remove('visible');
+    document.getElementById('abmelden-box')?.remove();
     showToast('Sitzung abgelaufen – bitte neuen Code eingeben', 'error');
   }
 
   // ── Start ──────────────────────────────────────────────────────────────────
+
+  // Der Service Worker speichert nur das Gerüst der Seite, nie Daten aus
+  // /api/ – siehe Kommentar in sw.js. Er hängt hier bewusst nicht am
+  // load-Ereignis: die Seite ist klein, und ohne ihn gibt es kein Symbol.
+  navigator.serviceWorker?.register('/sw.js').catch(() => {});
 
   (async () => {
     try {
@@ -297,7 +372,14 @@
       return;
     }
 
-    document.getElementById('footer').textContent =
+    // Der Server schickt ein frisches Token, sobald die Hälfte der Laufzeit
+    // herum ist. So verschiebt sich der Ablauf mit jedem Öffnen nach hinten.
+    if (limits.token) merken(limits.token);
+
+    // Abgelaufen oder nicht mehr gültig: dann liegt es nur noch im Weg.
+    if (session && !limits.elevated) vergessen();
+
+    document.getElementById('footer-text').textContent =
       `Dateien werden nach ${limits.retentionDays} Tagen automatisch gelöscht.`;
 
     if (!limits.twoFactorConfigured) {
@@ -308,7 +390,7 @@
       return;
     }
 
-    // Ein noch gültiges Token aus derselben Sitzung spart den Code.
+    // Ein noch gültiges Token vom letzten Mal spart den Code.
     if (limits.elevated) oeffnen(); else codeInput.focus();
   })();
 </script>

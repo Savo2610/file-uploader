@@ -130,6 +130,10 @@ async function hmacKey(secret) {
 export async function signSession(secret, ttlSeconds) {
   const payload = b64urlEncode(enc.encode(JSON.stringify({
     exp: Math.floor(Date.now() / 1000) + ttlSeconds,
+    // Die ursprüngliche Laufzeit steht mit im Token. Ohne sie ließe sich beim
+    // Verlängern nicht sagen, ob eine halbe Stunde oder ein halber Monat
+    // Restlaufzeit „schon fast abgelaufen“ heißt.
+    ttl: ttlSeconds,
     jti: randomToken(8),
   })));
   const sig = new Uint8Array(await crypto.subtle.sign('HMAC', await hmacKey(secret), enc.encode(payload)));

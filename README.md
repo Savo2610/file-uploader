@@ -20,7 +20,7 @@ nicht mit gültigem Sitzungstoken.
 npm run dev            # upload.veerka.mp   auf :8788
 npm run dev:download   # download.veerka.mp auf :8789
 
-npm test               # 43 End-to-End-Tests gegen beide
+npm test               # 63 End-to-End-Tests gegen beide
 npm run cleanup        # Testdateien wieder wegräumen
 npm run deploy         # von Hand veröffentlichen
 ```
@@ -41,11 +41,15 @@ node tools/cleanup-tests.mjs --remote
 | `public/download.html` | die Abhol-Seite                                      |
 | `public/style.css`   | gemeinsames Aussehen beider Seiten                     |
 | `public/_headers`    | Cache- und Sicherheits-Header                          |
+| `public/download.webmanifest` | macht die Abhol-Seite installierbar           |
+| `public/sw.js`       | Service Worker der Abhol-Seite                         |
+| `public/icons/`      | die Symbole für den Startbildschirm                    |
 | `src/index.js`       | die API, und welche Route unter welchem Host existiert |
 | `src/crypto.js`      | TOTP nach RFC 6238 und signierte Sitzungstoken         |
 | `schema.sql`         | Tabellen für D1                                        |
-| `tools/test-api.mjs` | 43 Tests, vor allem gegen Umgehungsversuche            |
+| `tools/test-api.mjs` | 63 Tests, vor allem gegen Umgehungsversuche            |
 | `tools/cleanup-tests.mjs` | räumt nur die Testdateien weg, nichts sonst      |
+| `tools/make-icons.mjs` | zeichnet die Symbole in `public/icons/`              |
 | `TEXT_INPUT_FEATURE.md` | Notiz zu einer noch nicht gebauten Idee            |
 
 ## Wie ein Upload läuft
@@ -74,6 +78,61 @@ Beim Anzeigen werden `http(s)`-Adressen anklickbar gemacht, alles andere
 bleibt Text. Der Aufbau läuft über DOM-Knoten, nie über `innerHTML` – sonst
 wäre ein eingefügtes `<script>` ein Einfallstor, und `javascript:`-Adressen
 würden anklickbar.
+
+## Angemeldet bleiben
+
+Auf der Abhol-Seite wird der Code aus der Authenticator-App nicht bei jedem
+Öffnen verlangt. Die Sitzung dort gilt **30 Tage** statt der sechs Stunden auf
+der Upload-Seite, und das Token liegt im `localStorage` statt im
+`sessionStorage` – es überlebt also das Schließen des Tabs.
+
+Dazu kommt eine gleitende Verlängerung: fragt die Seite den Zustand ab und ist
+mehr als die Hälfte der Laufzeit herum, gibt der Server ein frisches Token
+zurück. Wer die Seite alle paar Wochen benutzt, wird nie wieder nach einem Code
+gefragt; wer sie einen Monat liegen lässt, schon.
+
+Verlängert wird nur ein Token, das **noch gültig** ist – ein abgelaufenes kommt
+gar nicht erst durch die Prüfung. Es gibt also keinen Weg an der 2FA vorbei,
+nur einen Weg, sie nicht ständig zu wiederholen. Der Preis dafür: auf dem Gerät
+liegt ein Schlüssel, der einen Monat lang gilt. Deshalb steht unten auf der
+Seite „abmelden“ – das wirft Token und Cookie weg (`POST /api/logout`, denn das
+Cookie ist `HttpOnly` und lässt sich vom Browser aus nicht löschen).
+
+Die Unterscheidung macht der Client: nur die Abhol-Seite schickt beim
+Freischalten `remember: true` mit. Auf der Upload-Seite steht man vor einem
+fremden Gerät, dort bleibt es bei sechs Stunden.
+
+Ein Login über Google wäre dafür nicht nötig gewesen: er würde dieselbe Frage
+beantworten – wie lange darf eine Sitzung gelten – nur mit einem fremden
+Anbieter, einer Liste erlaubter Konten und einem OAuth-Rückweg dazwischen.
+
+## App auf dem Startbildschirm
+
+`download.veerka.mp` lässt sich als App installieren und liegt dann mit
+eigenem Symbol auf dem Startbildschirm. Dafür braucht es drei Dinge, und keins
+davon ist optional:
+
+- ein Manifest mit Name, Startadresse und Symbolen in **192 und 512 Pixel**
+  als PNG (SVG reicht Android nicht),
+- ein Symbol mit `purpose: "maskable"` – randlos, weil manche
+  Startbildschirme bis zu 20 % ringsum wegschneiden,
+- einen **Service Worker mit `fetch`-Behandlung**. Ohne ihn legt Android nur
+  eine Verknüpfung an, und die trägt das Chrome-Logo in der Ecke.
+
+Der Service Worker speichert ausschließlich das Gerüst der Seite – HTML, CSS,
+Symbole. Alles unter `/api/` geht immer ans Netz und landet nie in einem
+Cache: gespeicherte Antworten blieben sonst auf dem Gerät liegen, auch nachdem
+die Sitzung abgelaufen oder die Datei gelöscht ist. Seitenaufrufe holt er zuerst
+aus dem Netz, damit eine neue Fassung sofort ankommt; der Cache ist nur der
+Rettungsanker ohne Verbindung.
+
+Die Symbole liegen fertig im Repo. Ändern lassen sie sich mit
+`node tools/make-icons.mjs` – das Skript zeichnet sie aus Abstandsfunktionen
+und schreibt das PNG von Hand, damit für ein paar Quadrate kein Bildpaket im
+Projekt hängt.
+
+Manifest, Symbole und Service Worker gibt es nur unter der Abhol-Adresse; unter
+`upload.veerka.mp` antworten sie mit 404, wie die Abhol-Seite selbst.
 
 ## Limits
 
@@ -123,8 +182,10 @@ geprüft, und `tools/test-api.mjs` versucht genau das zu umgehen.
   keinen fremden Upload weiterschreiben.
 - Ein 2FA-Code gilt genau einmal; das benutzte Zeitfenster wird gespeichert.
 - Nach 10 Fehlversuchen ist eine IP für eine Stunde gesperrt.
-- Sitzungstoken sind HMAC-signiert und laufen nach 6 Stunden ab. Sie liegen im
-  `sessionStorage`, sind also mit dem Tab weg.
+- Sitzungstoken sind HMAC-signiert und tragen ihr Ablaufdatum in sich. Auf der
+  Upload-Seite gelten sie 6 Stunden und liegen im `sessionStorage`, sind also
+  mit dem Tab weg; auf der Abhol-Seite 30 Tage im `localStorage`. Verlängert
+  wird nur, was noch gültig ist – siehe „Angemeldet bleiben“.
 - Der Bucket ist **nicht** öffentlich. Dateien kommt nur heraus, wer einen
   gültigen Code hat, und nur über Schlüssel, die in der Datenbank stehen.
 - Downloads gehen immer als `application/octet-stream` mit
@@ -138,7 +199,8 @@ geprüft, und `tools/test-api.mjs` versucht genau das zu umgehen.
 Das Cookie, das beim Freischalten gesetzt wird, gilt nur für `/api/files` –
 es existiert allein, damit ein `<a href>` beim Download etwas mitschicken
 kann. Alle anderen Routen verlangen den `Authorization`-Header, sonst wäre
-das Cookie eine offene CSRF-Flanke.
+das Cookie eine offene CSRF-Flanke. Es ist `HttpOnly` und `SameSite=Strict`
+und hält genauso lange wie das Token, zu dem es gehört.
 
 ## Einrichtung von Grund auf
 

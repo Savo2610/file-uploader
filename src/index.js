@@ -22,6 +22,17 @@ const LIMITS = {
   // Gültigkeit des Tokens, das man nach dem 2FA-Code bekommt.
   sessionTtlSeconds: 6 * 60 * 60,
 
+  // Dasselbe, wenn beim Freischalten „angemeldet bleiben“ mitgeschickt wird –
+  // das tut die Abhol-Seite. Der Code aus der Authenticator-App bleibt der
+  // einzige Weg hinein; er wird nur nicht mehr bei jedem Öffnen verlangt.
+  rememberTtlSeconds: 30 * 24 * 60 * 60,
+
+  // Ab wann ein Token beim Nachfragen des Zustands gegen ein frisches getauscht
+  // wird: sobald weniger als dieser Anteil der Laufzeit übrig ist. Wer die
+  // Seite regelmäßig benutzt, kommt so nie an den Ablauf – wer sie einen Monat
+  // liegen lässt, braucht wieder einen Code.
+  renewBelow: 0.5,
+
   // Fehlversuche bei der Freischaltung, bevor die IP für eine Stunde gesperrt
   // wird. Ohne das ließen sich 6 Stellen in überschaubarer Zeit durchprobieren.
   maxAuthFailuresPerHour: 10,
@@ -92,15 +103,15 @@ const clientIp = request => request.headers.get('CF-Connecting-IP') || 'unbekann
 
 // ── Berechtigung ────────────────────────────────────────────────────────────
 
-// Liefert true, wenn die Anfrage ein gültiges Sitzungstoken mitbringt.
+// Liefert den Inhalt eines gültigen Sitzungstokens – oder null.
 //
 // Normalfall ist der Authorization-Header, den das Skript der Seite setzt.
 // Das Cookie wird nur dort akzeptiert, wo es sein muss – beim Download, weil
 // ein <a href> keinen Header mitschicken kann. Überall sonst bliebe es eine
 // offene Flanke für CSRF: ein Cookie schickt der Browser auch dann mit, wenn
 // eine fremde Seite die Anfrage auslöst.
-async function isElevated(request, env, { allowCookie = false } = {}) {
-  if (!env.SESSION_SECRET) return false;
+async function readSession(request, env, { allowCookie = false } = {}) {
+  if (!env.SESSION_SECRET) return null;
 
   const header = request.headers.get('Authorization') || '';
   let token = header.startsWith('Bearer ') ? header.slice(7) : '';
@@ -110,8 +121,23 @@ async function isElevated(request, env, { allowCookie = false } = {}) {
     token = /(?:^|;\s*)session=([^;]+)/.exec(cookie)?.[1] ?? '';
   }
 
-  if (!token) return false;
-  return (await verifySession(env.SESSION_SECRET, token)) !== null;
+  if (!token) return null;
+  return verifySession(env.SESSION_SECRET, token);
+}
+
+// Für alle Stellen, die nur wissen wollen, ob freigeschaltet ist.
+const isElevated = (request, env, opts) =>
+  readSession(request, env, opts).then(Boolean);
+
+// Das Cookie zum Sitzungstoken. Gilt bewusst nur für /api/files – es existiert
+// allein, damit ein Download-Link etwas mitschicken kann, siehe readSession().
+function setSessionCookie(response, request, token, maxAge) {
+  const secure = new URL(request.url).protocol === 'https:' ? ' Secure;' : '';
+  response.headers.append(
+    'Set-Cookie',
+    `session=${token}; Path=/api/files;${secure} HttpOnly; SameSite=Strict; Max-Age=${maxAge}`,
+  );
+  return response;
 }
 
 // ── Aufräumen ───────────────────────────────────────────────────────────────
@@ -143,13 +169,29 @@ async function cleanup(env) {
 // ── Route: Zustand ──────────────────────────────────────────────────────────
 
 async function handleStatus(request, env) {
-  const elevated = await isElevated(request, env);
+  const session  = await readSession(request, env);
+  const elevated = Boolean(session);
+
   const used = await env.DB
     .prepare('SELECT COUNT(*) AS n FROM uploads WHERE elevated = 0 AND created_at > ?')
     .bind(Date.now() - DAY_MS)
     .first();
 
-  return json({
+  // Gleitende Verlängerung: ist mehr als die Hälfte der Laufzeit herum, gibt
+  // es hier ein frisches Token. Dadurch bleibt angemeldet, wer die Seite
+  // benutzt, ohne dass ein einzelnes Token unbegrenzt lange gilt.
+  //
+  // Kein Nachschlüssel: verlängert wird nur ein Token, das gerade noch gültig
+  // ist. Ein abgelaufenes kommt hier gar nicht erst an.
+  let renewed = null;
+  if (session?.ttl) {
+    const uebrig = session.exp - Math.floor(Date.now() / 1000);
+    if (uebrig < session.ttl * LIMITS.renewBelow) {
+      renewed = await signSession(env.SESSION_SECRET, session.ttl);
+    }
+  }
+
+  const response = json({
     elevated,
     maxFileBytes: elevated ? LIMITS.elevatedMaxFileBytes : LIMITS.anonMaxFileBytes,
     elevatedMaxFileBytes: LIMITS.elevatedMaxFileBytes,
@@ -159,7 +201,13 @@ async function handleStatus(request, env) {
     twoFactorConfigured: Boolean(env.TOTP_SECRET && env.SESSION_SECRET),
     maxNoteChars: LIMITS.maxNoteChars,
     retentionDays: LIMITS.fileRetentionDays,
+    // Nur gesetzt, wenn eben verlängert wurde – sonst gar nicht erst im Feld.
+    ...(renewed ? { token: renewed, expiresIn: session.ttl } : {}),
+    // Damit die Seite sagen kann, bis wann sie ohne Code auskommt.
+    ...(session ? { sessionExpiresAt: session.exp * 1000 } : {}),
   });
+
+  return renewed ? setSessionCookie(response, request, renewed, session.ttl) : response;
 }
 
 // ── Route: Text und Links ───────────────────────────────────────────────────
@@ -261,18 +309,29 @@ async function handleUnlock(request, env) {
 
   await env.DB.prepare('INSERT INTO auth_attempts (ip, ok, at) VALUES (?, 1, ?)').bind(ip, now).run();
 
-  const token = await signSession(env.SESSION_SECRET, LIMITS.sessionTtlSeconds);
-  const secure = new URL(request.url).protocol === 'https:' ? ' Secure;' : '';
+  // Die Abhol-Seite bittet um eine lange Sitzung, die Upload-Seite nicht: dort
+  // sitzt die Freischaltung an einem fremden Gerät, hier am eigenen.
+  const ttl = body?.remember ? LIMITS.rememberTtlSeconds : LIMITS.sessionTtlSeconds;
+  const token = await signSession(env.SESSION_SECRET, ttl);
 
-  const response = json({
+  return setSessionCookie(json({
     token,
-    expiresIn: LIMITS.sessionTtlSeconds,
+    expiresIn: ttl,
     maxFileBytes: LIMITS.elevatedMaxFileBytes,
-  });
-  // Nur für die Download-Links gedacht, siehe isElevated().
+  }), request, token, ttl);
+}
+
+// ── Route: Abmelden ─────────────────────────────────────────────────────────
+//
+// Das Token selbst wirft die Seite weg; das Cookie kann sie nicht anfassen,
+// weil es HttpOnly ist. Dafür ist diese Route da.
+
+function handleLogout(request) {
+  const secure = new URL(request.url).protocol === 'https:' ? ' Secure;' : '';
+  const response = json({ ok: true });
   response.headers.append(
     'Set-Cookie',
-    `session=${token}; Path=/api/files;${secure} HttpOnly; SameSite=Strict; Max-Age=${LIMITS.sessionTtlSeconds}`,
+    `session=; Path=/api/files;${secure} HttpOnly; SameSite=Strict; Max-Age=0`,
   );
   return response;
 }
@@ -533,13 +592,21 @@ async function purgeOld(env) {
 // nicht nur Kosmetik: unter upload.veerka.mp gibt es schlicht keinen Weg, an
 // abgelegte Dateien zu kommen – auch nicht mit gültigem Sitzungstoken.
 const ROUTES_UPLOAD = new Set([
-  '/api/status', '/api/unlock', '/api/note',
+  '/api/status', '/api/unlock', '/api/logout', '/api/note',
   '/api/upload/init', '/api/upload/part', '/api/upload/complete', '/api/upload/abort',
 ]);
 
 const ROUTES_DOWNLOAD = new Set([
-  '/api/status', '/api/unlock', '/api/files', '/api/files/download', '/api/notes',
+  '/api/status', '/api/unlock', '/api/logout', '/api/files', '/api/files/download', '/api/notes',
 ]);
+
+// Statische Dateien, die es unter beiden Adressen gibt.
+const gemeinsam = path => path === '/style.css' || path.startsWith('/favicon');
+
+// Zubehör der Abhol-App: Manifest, Symbole, Service Worker. Gehört nur unter
+// die Abhol-Adresse – dort wird die App installiert, nicht auf der Upload-Seite.
+const abholZubehoer = path =>
+  path === '/download.webmanifest' || path === '/sw.js' || path.startsWith('/icons/');
 
 export default {
   async fetch(request, env, ctx) {
@@ -561,19 +628,17 @@ export default {
     // Weiterleitung auf „/download“. Intern wird deshalb der endungslose Pfad
     // angefragt, sonst bekäme der Browser ein 307 statt der Seite.
     if (!path.startsWith('/api/')) {
-      const geteilt = path === '/style.css' || path.startsWith('/favicon');
-
       if (isDownloadSite) {
         // Unter der Abhol-Adresse gibt es nur diese eine Seite. Jeder andere
         // Pfad landet ebenfalls dort, statt versehentlich die Upload-Seite zu
-        // zeigen.
-        const assetPath = geteilt ? path : '/download';
+        // zeigen – ausgenommen die Dateien, die es wirklich gibt.
+        const assetPath = gemeinsam(path) || abholZubehoer(path) ? path : '/download';
         return env.ASSETS.fetch(new Request(new URL(assetPath, url), request));
       }
 
       // Umgekehrt darf die Abhol-Seite unter der öffentlichen Adresse gar
-      // nicht auftauchen.
-      if (path === '/download' || path.startsWith('/download.')) {
+      // nicht auftauchen, ihr Zubehör ebenso wenig.
+      if (path === '/download' || path.startsWith('/download.') || abholZubehoer(path)) {
         return new Response('Nicht gefunden', { status: 404 });
       }
       return env.ASSETS.fetch(request);
@@ -587,6 +652,7 @@ export default {
     try {
       if (path === '/api/status'          && request.method === 'GET') return await handleStatus(request, env);
       if (path === '/api/unlock'          && post)                     return await handleUnlock(request, env);
+      if (path === '/api/logout'          && post)                     return handleLogout(request);
       if (path === '/api/upload/init'     && post)                     return await handleInit(request, env, ctx);
       if (path === '/api/upload/part'     && request.method === 'PUT') return await handlePart(request, env, url);
       if (path === '/api/upload/complete' && post)                     return await handleComplete(request, env);

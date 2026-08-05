@@ -142,13 +142,15 @@ console.log('\nZwei-Faktor-Anmeldung');
 
 // Jeder Lauf produziert absichtlich Fehlversuche. Nach zehn davon in einer
 // Stunde sperrt der Worker die IP – zu Recht, aber dann testet sich der Rest
-// nicht mehr. Lokal wird das Protokoll deshalb vorher geleert; an der echten
-// Seite bleibt es unangetastet.
+// nicht mehr. Dasselbe gilt für die verbrauchten Codes: ein Lauf braucht zwei
+// Zeitfenster, ein zweiter Lauf kurz danach fände nur noch benutzte vor.
+// Lokal werden beide Protokolle deshalb vorher geleert; an der echten Seite
+// bleiben sie unangetastet.
 if (UP.includes('localhost')) {
   const { execFileSync } = await import('node:child_process');
   execFileSync('npx', [
     'wrangler', 'd1', 'execute', 'upload-meta', '--local',
-    '--command', 'DELETE FROM auth_attempts',
+    '--command', 'DELETE FROM auth_attempts; DELETE FROM totp_used',
   ], { cwd: new URL('..', import.meta.url).pathname, stdio: 'ignore' });
 }
 
@@ -158,15 +160,91 @@ check('falscher Code abgelehnt', wrong.status === 401, 'HTTP ' + wrong.status);
 const noCode = await post('/api/unlock', { code: 'abcdef' });
 check('unsinniger Code abgelehnt', noCode.status === 401, 'HTTP ' + noCode.status);
 
-const code = totp(vars.TOTP_SECRET);
-const ok = await post('/api/unlock', { code });
-const okBody = await ok.json();
+// Ein Code gilt genau einmal. Ein Testlauf braucht zwei davon, und ein Lauf
+// kurz nach dem vorigen träfe sonst auf lauter schon verbrauchte Zeitfenster –
+// deshalb der Reihe nach das aktuelle und seine beiden Nachbarn, die alle in
+// der erlaubten Abweichung liegen.
+async function freischalten(extra = {}, base = UP) {
+  let res, body;
+  for (const fenster of [0, 1, -1]) {
+    const code = totp(vars.TOTP_SECRET, fenster);
+    res  = await post('/api/unlock', { code, ...extra }, null, base);
+    body = await res.json();
+    if (res.ok) return { res, body, code };
+  }
+  return { res, body, code: null };
+}
+
+const { res: ok, body: okBody, code } = await freischalten();
 check('richtiger Code akzeptiert', ok.status === 200 && Boolean(okBody.token), JSON.stringify(okBody));
 const token = okBody.token;
+
+check('ohne „angemeldet bleiben“ gilt die Sitzung 6 Stunden',
+  okBody.expiresIn === 6 * 60 * 60, String(okBody.expiresIn));
 
 const replay = await post('/api/unlock', { code });
 check('derselbe Code ein zweites Mal abgelehnt', replay.status === 401,
   'HTTP ' + replay.status);
+
+const { res: lang, body: langBody } = await freischalten({ remember: true }, DL);
+const DREISSIG_TAGE = 30 * 24 * 60 * 60;
+
+check('„angemeldet bleiben“ gibt eine Sitzung über 30 Tage',
+  lang.status === 200 && langBody.expiresIn === DREISSIG_TAGE, JSON.stringify(langBody));
+check('das Cookie für die Download-Links hält genauso lange',
+  (lang.headers.get('set-cookie') || '').includes('Max-Age=' + DREISSIG_TAGE),
+  lang.headers.get('set-cookie'));
+
+const langToken = langBody.token;
+
+const langStatus = await (await fetch(DL + '/api/status', {
+  headers: { Authorization: 'Bearer ' + langToken },
+})).json();
+check('lange Sitzung läuft erst in ungefähr 30 Tagen ab',
+  langStatus.sessionExpiresAt - Date.now() > 29 * 24 * 60 * 60 * 1000,
+  String(langStatus.sessionExpiresAt));
+check('ein frisches Token wird noch nicht verlängert', langStatus.token === undefined,
+  JSON.stringify(langStatus.token));
+
+// Ein Token bauen, das gleich abläuft – anders ließe sich die gleitende
+// Verlängerung nicht prüfen, ohne zwei Wochen zu warten.
+function sitzung(ttl, restSekunden) {
+  const payload = Buffer.from(JSON.stringify({
+    exp: Math.floor(Date.now() / 1000) + restSekunden, ttl, jti: 'testlauf',
+  })).toString('base64url');
+  const sig = createHmac('sha256', vars.SESSION_SECRET).update(payload).digest('base64url');
+  return `${payload}.${sig}`;
+}
+
+const fastAb = sitzung(DREISSIG_TAGE, 60 * 60);
+const verlaengert = await (await fetch(DL + '/api/status', {
+  headers: { Authorization: 'Bearer ' + fastAb },
+})).json();
+check('eine halb abgelaufene Sitzung bekommt ein frisches Token',
+  Boolean(verlaengert.token) && verlaengert.token !== fastAb,
+  JSON.stringify(verlaengert.token));
+check('das frische Token gilt wieder von vorn',
+  verlaengert.sessionExpiresAt !== undefined && verlaengert.expiresIn === DREISSIG_TAGE,
+  String(verlaengert.expiresIn));
+
+const mitVerlaengertem = await fetch(DL + '/api/files', {
+  headers: { Authorization: 'Bearer ' + verlaengert.token },
+});
+check('mit dem frischen Token geht es weiter', mitVerlaengertem.status === 200,
+  'HTTP ' + mitVerlaengertem.status);
+
+const laengstAb = sitzung(DREISSIG_TAGE, -60);
+const totesToken = await fetch(DL + '/api/status', {
+  headers: { Authorization: 'Bearer ' + laengstAb },
+});
+const totBody = await totesToken.json();
+check('ein abgelaufenes Token wird nicht verlängert',
+  totBody.elevated === false && totBody.token === undefined, JSON.stringify(totBody.token));
+
+const abgemeldet = await fetch(DL + '/api/logout', { method: 'POST' });
+check('Abmelden löscht das Cookie',
+  abgemeldet.status === 200 && (abgemeldet.headers.get('set-cookie') || '').includes('Max-Age=0'),
+  abgemeldet.headers.get('set-cookie'));
 
 const forged = 'abc.def';
 const withForged = await fetch(DL + '/api/files', { headers: { Authorization: 'Bearer ' + forged } });
@@ -326,6 +404,40 @@ check('Abhol-Adresse liefert die Abhol-Seite',
 const versteckt = await fetch(UP + '/download.html');
 check('Abhol-Seite nicht über die Upload-Adresse erreichbar', versteckt.status === 404,
   'HTTP ' + versteckt.status);
+
+console.log('\nApp auf dem Startbildschirm');
+
+// Ohne diese drei Dateien legt Android nur eine Verknüpfung mit Chrome-Logo
+// an statt einer App mit eigenem Symbol.
+const manifestRes = await fetch(DL + '/download.webmanifest');
+const manifest = manifestRes.ok ? await manifestRes.json() : null;
+check('Manifest wird ausgeliefert', manifestRes.status === 200, 'HTTP ' + manifestRes.status);
+check('Manifest bringt 192er und 512er Symbole mit',
+  ['192x192', '512x512'].every(s => manifest?.icons?.some(i => i.sizes === s)),
+  JSON.stringify(manifest?.icons?.map(i => i.sizes)));
+check('Manifest enthält ein maskable Symbol',
+  manifest?.icons?.some(i => i.purpose === 'maskable'));
+
+const iconRes = await fetch(DL + '/icons/abholen-512.png');
+const iconBuf = Buffer.from(await iconRes.arrayBuffer());
+check('Symbol ist ein echtes PNG',
+  iconRes.status === 200 && iconBuf.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])),
+  'HTTP ' + iconRes.status);
+
+const swRes = await fetch(DL + '/sw.js');
+const swText = swRes.ok ? await swRes.text() : '';
+check('Service Worker wird ausgeliefert', swRes.status === 200, 'HTTP ' + swRes.status);
+check('Service Worker fasst /api/ nicht an', swText.includes("startsWith('/api/')"));
+
+const seiteMitManifest = await (await fetch(DL + '/')).text();
+check('Abhol-Seite verweist auf das Manifest', seiteMitManifest.includes('rel="manifest"'));
+
+// Das Zubehör gehört zur Abhol-Adresse und hat unter der öffentlichen nichts
+// zu suchen – sonst ließe sich von dort auf die Existenz der anderen schließen.
+for (const pfad of ['/download.webmanifest', '/sw.js', '/icons/abholen-512.png']) {
+  const res = await fetch(UP + pfad);
+  check(`${pfad} auf der Upload-Adresse nicht vorhanden`, res.status === 404, 'HTTP ' + res.status);
+}
 
 console.log('\nTageskontingent');
 

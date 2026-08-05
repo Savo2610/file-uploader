@@ -1,0 +1,19 @@
+{
+  "id": "/",
+  "name": "Dateien abholen",
+  "short_name": "Abholen",
+  "description": "Dateien, Texte und Links, die auf upload.veerka.mp angekommen sind.",
+  "lang": "de",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f0e0c",
+  "theme_color": "#0f0e0c",
+  "icons": [
+    { "src": "/icons/abholen-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/abholen-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icons/abholen-maskable-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icons/abholen-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
