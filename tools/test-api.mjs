@@ -367,6 +367,57 @@ const gone = await fetch(DL + '/api/files/download?key=' + encodeURIComponent(vi
 check('Datei ist danach auch aus R2 weg', delFile.status === 200 && gone.status === 404,
   `löschen ${delFile.status}, danach ${gone.status}`);
 
+console.log('\nAlles auf einmal löschen');
+
+// Nur Dateien aus diesem Lauf. Läuft der Test gegen die echte Seite, darf er
+// unter keinen Umständen etwas anderes anfassen.
+const meins = (await (await fetch(DL + '/api/files', {
+  headers: { Authorization: 'Bearer ' + token },
+})).json()).files.filter(f => f.name.startsWith(TEST_PREFIX));
+
+const purgeAnon = await post('/api/purge', { keys: [meins[0].key] }, null, DL);
+check('Sammellöschen ohne Freischaltung gesperrt', purgeAnon.status === 401, 'HTTP ' + purgeAnon.status);
+
+const purgeOhne = await post('/api/purge', {}, token, DL);
+check('Sammellöschen ohne Angabe abgelehnt', purgeOhne.status === 400, 'HTTP ' + purgeOhne.status);
+
+const purgeErfunden = await post('/api/purge', { keys: ['gibt/es/nicht'] }, token, DL);
+const erfundenBody = await purgeErfunden.json();
+check('erfundener Schlüssel löscht nichts',
+  purgeErfunden.status === 200 && erfundenBody.files === 0, JSON.stringify(erfundenBody));
+
+// Ein Text und zwei Dateien: alles, was der Knopf auf der Seite auch schickt.
+await post('/api/note', { text: TEST_PREFIX + 'wird gleich gelöscht' });
+const zuLoeschenTexte = (await (await fetch(DL + '/api/notes', {
+  headers: { Authorization: 'Bearer ' + token },
+})).json()).notes.filter(n => n.text.startsWith(TEST_PREFIX));
+
+const opfer = meins.slice(0, 2).map(f => f.key);
+const purge = await post('/api/purge', {
+  keys: opfer, noteIds: zuLoeschenTexte.map(n => n.id),
+}, token, DL);
+const purgeBody = await purge.json();
+check('Sammellöschen nimmt Dateien und Texte',
+  purge.status === 200 && purgeBody.files === opfer.length && purgeBody.notes === zuLoeschenTexte.length,
+  JSON.stringify(purgeBody));
+
+const nachher = await (await fetch(DL + '/api/files', {
+  headers: { Authorization: 'Bearer ' + token },
+})).json();
+check('die gelöschten Dateien stehen nicht mehr in der Liste',
+  !nachher.files.some(f => opfer.includes(f.key)));
+
+const wegAusR2 = await fetch(DL + '/api/files/download?key=' + encodeURIComponent(opfer[0]), {
+  headers: { Authorization: 'Bearer ' + token },
+});
+check('sie sind auch aus R2 weg', wegAusR2.status === 404, 'HTTP ' + wegAusR2.status);
+
+// Der Kern der Sache: es wird genau das gelöscht, was mitgeschickt wurde.
+// Was zwischen Herunterladen und Löschen ankommt, muss liegen bleiben.
+const ueberlebt = nachher.files.filter(f => f.name.startsWith(TEST_PREFIX));
+check('nicht mitgeschickte Dateien bleiben liegen', ueberlebt.length > 0,
+  `${ueberlebt.length} übrig`);
+
 console.log('\nTrennung der beiden Adressen');
 
 // Der Kern der Trennung: unter der öffentlichen Adresse gibt es keinen Weg an
@@ -392,6 +443,10 @@ check('Hochladen auf der Abhol-Seite nicht vorhanden', initOnDownload.status ===
 const noteOnDownload = await post('/api/note', { text: 'test' }, null, DL);
 check('Text einwerfen auf der Abhol-Seite nicht vorhanden', noteOnDownload.status === 404,
   'HTTP ' + noteOnDownload.status);
+
+const purgeOnUpload = await post('/api/purge', { keys: ['egal'] }, token, UP);
+check('Sammellöschen auf der Upload-Seite nicht vorhanden', purgeOnUpload.status === 404,
+  'HTTP ' + purgeOnUpload.status);
 
 const seiteUpload = await (await fetch(UP + '/')).text();
 check('Upload-Adresse liefert die Upload-Seite',

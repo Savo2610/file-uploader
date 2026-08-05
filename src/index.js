@@ -558,6 +558,63 @@ async function handleFileDelete(request, env, url) {
   return json({ ok: true });
 }
 
+// ── Route: Das Heruntergeladene löschen ─────────────────────────────────────
+//
+// Bewusst kein „lösch alles, was da ist“: der Browser schickt die Schlüssel
+// mit, die er vorher wirklich geholt hat. Zwischen Herunterladen und Löschen
+// kann etwas Neues angekommen sein – das wäre sonst weg, ohne dass es je
+// jemand gesehen hätte. R2 hat keine Versionierung, weg ist weg.
+//
+// Der Browser entscheidet damit nicht mehr als vorher: gelöscht wird nur, was
+// ohnehin in der Datenbank steht und fertig hochgeladen ist. Ein erfundener
+// Schlüssel trifft nichts.
+
+// So viele Einträge nimmt ein Aufruf entgegen – dieselbe Größenordnung wie die
+// Listen, die die Seite überhaupt anzeigt.
+const MAX_LOESCHEN = 500;
+
+async function handlePurge(request, env) {
+  if (!(await isElevated(request, env))) return fail(401, 'Nicht freigeschaltet.');
+
+  let body;
+  try { body = await request.json(); } catch { return fail(400, 'Ungültige Anfrage.'); }
+
+  const gewuenscht = feld => {
+    const roh = Array.isArray(body?.[feld]) ? body[feld] : [];
+    return new Set(roh.slice(0, MAX_LOESCHEN).map(String));
+  };
+
+  const keys    = gewuenscht('keys');
+  const noteIds = gewuenscht('noteIds');
+  if (!keys.size && !noteIds.size) return fail(400, 'Nichts angegeben, was gelöscht werden soll.');
+
+  const [dateien, texte] = await env.DB.batch([
+    env.DB.prepare('SELECT r2_key FROM uploads WHERE completed_at IS NOT NULL'),
+    env.DB.prepare('SELECT id FROM notes'),
+  ]);
+
+  const zuLoeschen = (dateien.results ?? []).map(r => r.r2_key).filter(k => keys.has(k));
+  const texteWeg   = (texte.results ?? []).map(r => r.id).filter(id => noteIds.has(id));
+
+  if (zuLoeschen.length) {
+    // R2 nimmt bis zu 1000 Schlüssel auf einmal, mehr als MAX_LOESCHEN sind es nie.
+    await env.BUCKET.delete(zuLoeschen);
+  }
+
+  // Je ein Statement pro Eintrag statt einer langen IN-Liste: D1 begrenzt die
+  // Zahl der gebundenen Werte pro Anfrage, die Zahl der Statements im Stapel
+  // ist das kleinere Problem.
+  const statements = [
+    ...zuLoeschen.map(k  => env.DB.prepare('DELETE FROM uploads WHERE r2_key = ?').bind(k)),
+    ...texteWeg.map(id   => env.DB.prepare('DELETE FROM notes WHERE id = ?').bind(id)),
+  ];
+  for (let i = 0; i < statements.length; i += 50) {
+    await env.DB.batch(statements.slice(i, i + 50));
+  }
+
+  return json({ ok: true, files: zuLoeschen.length, notes: texteWeg.length });
+}
+
 // ── Nächtlicher Aufräumlauf ─────────────────────────────────────────────────
 //
 // R2 rechnet nach liegendem Speicher ab. Ohne das hier bliebe jede jemals
@@ -596,8 +653,11 @@ const ROUTES_UPLOAD = new Set([
   '/api/upload/init', '/api/upload/part', '/api/upload/complete', '/api/upload/abort',
 ]);
 
+// /api/purge gibt es nur hier: unter der öffentlichen Adresse soll nichts
+// löschen können, auch nicht mit gültigem Sitzungstoken.
 const ROUTES_DOWNLOAD = new Set([
-  '/api/status', '/api/unlock', '/api/logout', '/api/files', '/api/files/download', '/api/notes',
+  '/api/status', '/api/unlock', '/api/logout',
+  '/api/files', '/api/files/download', '/api/notes', '/api/purge',
 ]);
 
 // Statische Dateien, die es unter beiden Adressen gibt.
@@ -660,6 +720,7 @@ export default {
       if (path === '/api/files'           && request.method === 'GET') return await handleList(request, env);
       if (path === '/api/files'           && del)                      return await handleFileDelete(request, env, url);
       if (path === '/api/files/download'  && request.method === 'GET') return await handleDownload(request, env, url);
+      if (path === '/api/purge'           && post)                     return await handlePurge(request, env);
       if (path === '/api/note'            && post)                     return await handleNote(request, env);
       if (path === '/api/notes'           && request.method === 'GET') return await handleNotesList(request, env);
       if (path === '/api/notes'           && del)                      return await handleNoteDelete(request, env, url);

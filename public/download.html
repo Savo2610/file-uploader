@@ -41,6 +41,24 @@
     }
     #abmelden:hover { color: var(--gold); }
     #footer .trenner { opacity: 0.4; margin: 0 0.5rem; }
+
+    /* Die beiden Sammelknöpfe über den Listen. */
+    .alles { margin-bottom: 1.8rem; animation: fadeUp 0.5s ease both; }
+    .alles-knoepfe { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+    .alles-knoepfe .pw-submit { flex: 1; min-width: 11rem; }
+
+    /* „Alles löschen“ trägt die Warnfarbe erst beim Anfassen: sichtbar
+       gefährlich, aber nicht dauernd rot blinkend neben dem Normalfall. */
+    .alles-weg { color: var(--muted); }
+    .alles-weg:hover { border-color: var(--error); color: var(--error); background: #1f1917; }
+
+    .alles-status {
+      margin-top: 0.7rem; min-height: 1.1rem;
+      font-size: 0.72rem; color: var(--muted);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .alles-status.fertig { color: var(--success); }
+    .alles-status.fehler { color: var(--error); }
   </style>
 </head>
 <body>
@@ -63,6 +81,14 @@
   </div>
 
   <div id="inhalt">
+    <div class="alles" id="alles" hidden>
+      <div class="alles-knoepfe">
+        <button class="pw-submit" id="alles-laden" type="button">Alles herunterladen</button>
+        <button class="pw-submit alles-weg" id="alles-loeschen" type="button" hidden>Alles löschen</button>
+      </div>
+      <p class="alles-status" id="alles-status"></p>
+    </div>
+
     <section class="files">
       <h2>Texte &amp; Links</h2>
       <div id="notes-list"></div>
@@ -214,6 +240,148 @@
     document.getElementById('footer').appendChild(box);
   }
 
+  // ── Alles auf einmal ───────────────────────────────────────────────────────
+  //
+  // Der Reihe nach, nicht parallel: jede Datei wird einzeln geholt und erst
+  // dann gespeichert. Das kostet Zeit, ist dafür aber ehrlich – am Ende steht
+  // fest, welche Dateien wirklich angekommen sind. Nur die dürfen anschließend
+  // gelöscht werden.
+  //
+  // Bewusst nicht als ZIP vom Server: das Archivformat verlangt eine Prüfsumme
+  // über den gesamten Inhalt, und die müsste der Worker über jedes Byte
+  // rechnen. Bei zehn Gigabyte reißt das die Rechenzeit-Grenze.
+
+  const allesBox      = document.getElementById('alles');
+  const allesLaden    = document.getElementById('alles-laden');
+  const allesLoeschen = document.getElementById('alles-loeschen');
+  const allesStatus   = document.getElementById('alles-status');
+
+  // Was zuletzt in den Listen stand …
+  const bestand = { files: [], notes: [] };
+  // Läuft gerade ein Sammel-Download? Dann darf ein Neuladen der Listen den
+  // Knopf nicht wieder freigeben.
+  let laeuft = false;
+  // … und was davon vollständig heruntergeladen wurde. Bleibt null, solange
+  // auch nur eine Datei gefehlt hat – dann gibt es nichts zu löschen.
+  let geholt = null;
+
+  function melde(text, art = '') {
+    allesStatus.textContent = text;
+    allesStatus.className = 'alles-status ' + art;
+  }
+
+  function zeigeAlles() {
+    const n = bestand.files.length + bestand.notes.length;
+    allesBox.hidden = n === 0;
+    allesLaden.disabled = laeuft || n === 0;
+  }
+
+  // Legt einen Blob als Datei ab. Der Objektschlüssel wird verzögert
+  // freigegeben: sofort danach bricht der Browser den Download unter Umständen
+  // wieder ab, weil die Quelle unter ihm wegfällt.
+  function speichern(blob, name) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  }
+
+  allesLaden.onclick = async () => {
+    const dateien = bestand.files.slice();
+    const texte   = bestand.notes.slice();
+    if (!dateien.length && !texte.length) return;
+
+    geholt = null;
+    laeuft = true;
+    allesLoeschen.hidden = true;
+    allesLaden.disabled = true;
+    allesLaden.textContent = 'lädt …';
+
+    const fertig = { keys: [], noteIds: [] };
+    let aktuell = 'Texte & Links';
+
+    try {
+      // Die Texte zuerst und alle zusammen in eine Datei – einzeln wären es
+      // lauter Schnipsel, und lesen will man sie ohnehin am Stück.
+      if (texte.length) {
+        const inhalt = texte.map(n =>
+          `── ${new Date(n.createdAt).toLocaleString('de-DE')} ──\n${n.text}`,
+        ).join('\n\n');
+        speichern(new Blob([inhalt], { type: 'text/plain;charset=utf-8' }), 'Texte-und-Links.txt');
+        fertig.noteIds = texte.map(n => n.id);
+      }
+
+      for (let i = 0; i < dateien.length; i++) {
+        const f = dateien[i];
+        aktuell = f.name;
+        melde(`${i + 1} von ${dateien.length} · ${f.name}`);
+
+        const res = await fetch('/api/files/download?key=' + encodeURIComponent(f.key), {
+          headers: authHeaders(),
+        });
+        if (res.status === 401) return abgelaufen();
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+
+        speichern(await res.blob(), f.name);
+        fertig.keys.push(f.key);
+
+        // Kurze Pause: sonst wirft der Browser bei vielen Dateien hintereinander
+        // welche weg, statt sie alle zu speichern.
+        if (i < dateien.length - 1) await new Promise(r => setTimeout(r, 400));
+      }
+
+      geholt = fertig;
+      allesLoeschen.hidden = false;
+      melde(`${fertig.keys.length} Datei(en) und ${fertig.noteIds.length} Text(e) heruntergeladen.`, 'fertig');
+    } catch {
+      // Ein Fehlschlag reicht: dann wird nichts zum Löschen angeboten.
+      melde(`„${aktuell}“ konnte nicht geladen werden – nichts wird gelöscht.`, 'fehler');
+      showToast('Herunterladen abgebrochen', 'error');
+    } finally {
+      laeuft = false;
+      allesLaden.disabled = false;
+      allesLaden.textContent = 'Alles herunterladen';
+    }
+  };
+
+  allesLoeschen.onclick = async () => {
+    if (!geholt) return;
+    const { keys, noteIds } = geholt;
+
+    if (!confirm(
+      `${keys.length} Datei(en) und ${noteIds.length} Text(e) endgültig löschen?\n\n`
+      + 'Gelöscht wird genau das eben Heruntergeladene. Später Angekommenes '
+      + 'bleibt liegen.\n\nDas lässt sich nicht rückgängig machen.'
+    )) return;
+
+    allesLoeschen.disabled = true;
+    try {
+      const res = await fetch('/api/purge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...authHeaders() },
+        body: JSON.stringify({ keys, noteIds }),
+      });
+      if (res.status === 401) return abgelaufen();
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || '');
+
+      geholt = null;
+      allesLoeschen.hidden = true;
+      melde(`${data.files} Datei(en) und ${data.notes} Text(e) gelöscht.`, 'fertig');
+      showToast(`${data.files} Datei(en) und ${data.notes} Text(e) gelöscht`, 'success');
+      loadFiles();
+      loadNotes();
+    } catch {
+      showToast('Löschen fehlgeschlagen', 'error');
+    } finally {
+      allesLoeschen.disabled = false;
+    }
+  };
+
   // ── Dateien ────────────────────────────────────────────────────────────────
 
   async function loadFiles() {
@@ -223,6 +391,8 @@
       if (res.status === 401) return abgelaufen();
       if (!res.ok) return;
       const { files } = await res.json();
+      bestand.files = files;
+      zeigeAlles();
 
       list.textContent = '';
       if (!files.length) emptyHint(list, 'Noch nichts da.');
@@ -294,6 +464,8 @@
       const res = await fetch('/api/notes', { headers: authHeaders() });
       if (!res.ok) return;
       const { notes } = await res.json();
+      bestand.notes = notes;
+      zeigeAlles();
 
       list.textContent = '';
       if (!notes.length) emptyHint(list, 'Noch nichts da.');
@@ -350,6 +522,12 @@
 
   function abgelaufen() {
     vergessen();
+    geholt = null;
+    bestand.files = [];
+    bestand.notes = [];
+    zeigeAlles();
+    allesLoeschen.hidden = true;
+    melde('');
     document.getElementById('gate').style.display = '';
     document.getElementById('inhalt').classList.remove('visible');
     document.getElementById('abmelden-box')?.remove();

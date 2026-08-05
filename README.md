@@ -20,7 +20,7 @@ nicht mit gültigem Sitzungstoken.
 npm run dev            # upload.veerka.mp   auf :8788
 npm run dev:download   # download.veerka.mp auf :8789
 
-npm test               # 63 End-to-End-Tests gegen beide
+npm test               # 71 End-to-End-Tests gegen beide
 npm run cleanup        # Testdateien wieder wegräumen
 npm run deploy         # von Hand veröffentlichen
 ```
@@ -47,7 +47,7 @@ node tools/cleanup-tests.mjs --remote
 | `src/index.js`       | die API, und welche Route unter welchem Host existiert |
 | `src/crypto.js`      | TOTP nach RFC 6238 und signierte Sitzungstoken         |
 | `schema.sql`         | Tabellen für D1                                        |
-| `tools/test-api.mjs` | 63 Tests, vor allem gegen Umgehungsversuche            |
+| `tools/test-api.mjs` | 71 Tests, vor allem gegen Umgehungsversuche            |
 | `tools/cleanup-tests.mjs` | räumt nur die Testdateien weg, nichts sonst      |
 | `tools/make-icons.mjs` | zeichnet die Symbole in `public/icons/`              |
 | `TEXT_INPUT_FEATURE.md` | Notiz zu einer noch nicht gebauten Idee            |
@@ -78,6 +78,27 @@ Beim Anzeigen werden `http(s)`-Adressen anklickbar gemacht, alles andere
 bleibt Text. Der Aufbau läuft über DOM-Knoten, nie über `innerHTML` – sonst
 wäre ein eingefügtes `<script>` ein Einfallstor, und `javascript:`-Adressen
 würden anklickbar.
+
+## Alles abholen und leer räumen
+
+Über den Listen stehen zwei Knöpfe. „Alles herunterladen“ holt jede Datei
+einzeln und der Reihe nach; die Texte gehen als eine `Texte-und-Links.txt`
+mit. Erst wenn **jede** Datei angekommen ist, erscheint „Alles löschen“.
+Scheitert eine, bleibt der zweite Knopf weg und die Meldung nennt den Namen –
+lieber nichts löschen als etwas, das nie ankam.
+
+Der zweite Knopf schickt die Schlüssel mit, die der Browser vorher wirklich
+geholt hat (`POST /api/purge`). Gelöscht wird genau das und nichts sonst: was
+zwischen Herunterladen und Löschen ankommt, bleibt liegen. Ein „lösch alles,
+was da ist“ hätte es mitgenommen, ohne dass es je jemand gesehen hätte.
+
+Der Server prüft trotzdem jeden Schlüssel gegen die Datenbank – ein erfundener
+trifft nichts. `/api/purge` gibt es nur unter der Abhol-Adresse.
+
+Sequenziell und nicht als ZIP vom Server, weil das Archivformat eine Prüfsumme
+über den ganzen Inhalt verlangt. Die müsste der Worker über jedes Byte rechnen,
+und bei zehn Gigabyte reißt das die Rechenzeit-Grenze. Einzeln zu laden
+kostet dafür einen Klick auf Chromes Rückfrage nach mehreren Downloads.
 
 ## Angemeldet bleiben
 
@@ -188,6 +209,9 @@ geprüft, und `tools/test-api.mjs` versucht genau das zu umgehen.
   wird nur, was noch gültig ist – siehe „Angemeldet bleiben“.
 - Der Bucket ist **nicht** öffentlich. Dateien kommt nur heraus, wer einen
   gültigen Code hat, und nur über Schlüssel, die in der Datenbank stehen.
+- Auch das Sammellöschen fasst nur Schlüssel an, die in der Datenbank stehen
+  und zu einem fertigen Upload gehören – und nur die, die der Browser
+  ausdrücklich mitschickt. Es gibt keinen Aufruf, der „den Rest“ löscht.
 - Downloads gehen immer als `application/octet-stream` mit
   `Content-Disposition: attachment` raus. Sonst ließe sich hochgeladenes HTML
   unter upload.veerka.mp im Browser ausführen.
