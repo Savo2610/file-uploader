@@ -31,15 +31,17 @@
     #inhalt.visible { display: block; }
     .files { display: block; }
 
-    /* Abmelden gehört ins Kleingedruckte: gebraucht wird es selten, aber es
-       muss erreichbar sein – das Cookie kann die Seite selbst nicht löschen. */
-    #abmelden {
+    /* Abmelden und Benachrichtigungen gehören ins Kleingedruckte: gebraucht
+       werden sie selten, erreichbar müssen sie sein – das Sitzungs-Cookie etwa
+       kann die Seite selbst gar nicht löschen. */
+    .fuss-knopf {
       background: none; border: 0; padding: 0;
       color: var(--muted); font: inherit; font-size: inherit;
       text-decoration: underline; text-underline-offset: 3px;
       cursor: pointer; opacity: 0.8;
     }
-    #abmelden:hover { color: var(--gold); }
+    .fuss-knopf:hover { color: var(--gold); }
+    .fuss-knopf:disabled { cursor: default; text-decoration: none; }
     #footer .trenner { opacity: 0.4; margin: 0 0.5rem; }
 
     /* Die beiden Sammelknöpfe über den Listen. */
@@ -213,31 +215,151 @@
     document.getElementById('inhalt').classList.add('visible');
     document.getElementById('untertitel').textContent = 'Alles, was bei mir angekommen ist.';
     zeigeAbmelden();
+    zeigePush();
     loadFiles();
     loadNotes();
   }
 
-  function zeigeAbmelden() {
-    if (document.getElementById('abmelden-box')) return;
-
+  // Hängt einen Textknopf ans Kleingedruckte im Fuß.
+  function fussKnopf(id, beschriftung, beiKlick) {
     const box = document.createElement('span');
-    box.id = 'abmelden-box';
+    box.id = id + '-box';
 
     const trenner = document.createElement('span');
     trenner.className = 'trenner';
     trenner.textContent = '·';
 
     const knopf = document.createElement('button');
-    knopf.id = 'abmelden';
+    knopf.id = id;
+    knopf.className = 'fuss-knopf';
     knopf.type = 'button';
-    knopf.textContent = 'abmelden';
-    knopf.onclick = () => {
-      vergessen();
-      location.reload();
-    };
+    knopf.textContent = beschriftung;
+    knopf.onclick = beiKlick;
 
     box.append(trenner, knopf);
     document.getElementById('footer').appendChild(box);
+    return knopf;
+  }
+
+  function zeigeAbmelden() {
+    if (document.getElementById('abmelden-box')) return;
+    fussKnopf('abmelden', 'abmelden', () => {
+      vergessen();
+      location.reload();
+    });
+  }
+
+  // ── Benachrichtigungen ─────────────────────────────────────────────────────
+  //
+  // Push braucht einen Service Worker – den gibt es hier ohnehin, weil die
+  // Seite sonst gar nicht installierbar wäre. Auf iPhones existiert
+  // window.Notification allerdings nur, wenn die Seite vom Startbildschirm
+  // gestartet wurde; im normalen Safari-Tab ist Push schlicht nicht vorhanden.
+
+  const pushMoeglich = 'serviceWorker' in navigator
+    && 'PushManager' in window
+    && 'Notification' in window;
+
+  const aufStartbildschirm = () =>
+    window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+
+  // Der öffentliche VAPID-Schlüssel kommt als base64url und muss als Bytes an
+  // subscribe() gehen.
+  function schluesselBytes(b64) {
+    const s = b64.replace(/-/g, '+').replace(/_/g, '/');
+    const roh = atob(s + '='.repeat((4 - (s.length % 4)) % 4));
+    return Uint8Array.from(roh, c => c.charCodeAt(0));
+  }
+
+  const laufendesAbo = async () =>
+    (await navigator.serviceWorker.ready).pushManager.getSubscription();
+
+  async function pushEinschalten() {
+    // Muss aus einem Tipp heraus geschehen, sonst lehnt Safari sofort ab.
+    if (await Notification.requestPermission() !== 'granted') {
+      showToast('Benachrichtigungen wurden abgelehnt', 'error');
+      return false;
+    }
+
+    const reg = await navigator.serviceWorker.ready;
+    const abo = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: schluesselBytes(limits.pushPublicKey),
+    });
+
+    const { endpoint, keys } = abo.toJSON();
+    const res = await fetch('/api/push/subscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ endpoint, p256dh: keys.p256dh, auth: keys.auth }),
+    });
+    if (!res.ok) {
+      // Nicht angenommen: dann auch im Browser nicht stehen lassen, sonst
+      // meldet er sich für etwas an, wovon der Server nichts weiß.
+      await abo.unsubscribe().catch(() => {});
+      throw new Error();
+    }
+    return true;
+  }
+
+  async function pushAusschalten() {
+    const abo = await laufendesAbo();
+    if (!abo) return;
+    await fetch('/api/push/unsubscribe', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ endpoint: abo.endpoint }),
+    }).catch(() => {});
+    await abo.unsubscribe();
+  }
+
+  async function zeigePush() {
+    if (document.getElementById('push-box')) return;
+    if (!limits?.pushPublicKey) return;
+
+    if (!pushMoeglich) {
+      // Auf dem iPhone ist das kein Fehler, sondern eine Bedingung – und eine,
+      // die sich mit zwei Tipps erfüllen lässt.
+      if (!aufStartbildschirm()) {
+        const hinweis = document.createElement('span');
+        hinweis.id = 'push-box';
+        hinweis.innerHTML = '<span class="trenner">·</span>';
+        hinweis.append('für Benachrichtigungen zum Startbildschirm hinzufügen');
+        document.getElementById('footer').appendChild(hinweis);
+      }
+      return;
+    }
+
+    let an = Boolean(await laufendesAbo());
+    const knopf = fussKnopf('push', '', null);
+
+    const beschriften = () => {
+      knopf.textContent = an ? 'Benachrichtigungen aus' : 'Benachrichtigungen an';
+    };
+    beschriften();
+
+    knopf.onclick = async () => {
+      knopf.disabled = true;
+      const vorher = knopf.textContent;
+      knopf.textContent = '…';
+      try {
+        if (an) {
+          await pushAusschalten();
+          an = false;
+          showToast('Benachrichtigungen aus');
+        } else {
+          if (!(await pushEinschalten())) return;
+          an = true;
+          showToast('Benachrichtigungen an', 'success');
+        }
+      } catch {
+        knopf.textContent = vorher;
+        showToast('Hat nicht geklappt', 'error');
+      } finally {
+        knopf.disabled = false;
+        beschriften();
+      }
+    };
   }
 
   // ── Alles auf einmal ───────────────────────────────────────────────────────
@@ -531,6 +653,7 @@
     document.getElementById('gate').style.display = '';
     document.getElementById('inhalt').classList.remove('visible');
     document.getElementById('abmelden-box')?.remove();
+    document.getElementById('push-box')?.remove();
     showToast('Sitzung abgelaufen – bitte neuen Code eingeben', 'error');
   }
 

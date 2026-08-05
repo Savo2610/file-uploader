@@ -20,7 +20,7 @@ nicht mit gültigem Sitzungstoken.
 npm run dev            # upload.veerka.mp   auf :8788
 npm run dev:download   # download.veerka.mp auf :8789
 
-npm test               # 71 End-to-End-Tests gegen beide
+npm test               # 102 Tests gegen beide
 npm run cleanup        # Testdateien wieder wegräumen
 npm run deploy         # von Hand veröffentlichen
 ```
@@ -46,10 +46,12 @@ node tools/cleanup-tests.mjs --remote
 | `public/icons/`      | die Symbole für den Startbildschirm                    |
 | `src/index.js`       | die API, und welche Route unter welchem Host existiert |
 | `src/crypto.js`      | TOTP nach RFC 6238 und signierte Sitzungstoken         |
+| `src/push.js`        | Web Push: VAPID und die Verschlüsselung der Nutzlast    |
 | `schema.sql`         | Tabellen für D1                                        |
-| `tools/test-api.mjs` | 71 Tests, vor allem gegen Umgehungsversuche            |
+| `tools/test-api.mjs` | 102 Tests, vor allem gegen Umgehungsversuche           |
 | `tools/cleanup-tests.mjs` | räumt nur die Testdateien weg, nichts sonst      |
 | `tools/make-icons.mjs` | zeichnet die Symbole in `public/icons/`              |
+| `tools/make-vapid.mjs` | erzeugt einmalig das Schlüsselpaar für Web Push      |
 | `TEXT_INPUT_FEATURE.md` | Notiz zu einer noch nicht gebauten Idee            |
 
 ## Wie ein Upload läuft
@@ -155,6 +157,59 @@ Projekt hängt.
 Manifest, Symbole und Service Worker gibt es nur unter der Abhol-Adresse; unter
 `upload.veerka.mp` antworten sie mit 404, wie die Abhol-Seite selbst.
 
+## Benachrichtigung, wenn etwas ankommt
+
+Unten auf der Abhol-Seite steht „Benachrichtigungen an“. Danach meldet sich das
+Handy, sobald jemand etwas eingeworfen hat – über Web Push, ohne fremden Dienst
+und ohne App.
+
+Der Weg dorthin führt zwangsläufig über den Push-Dienst des jeweiligen
+Browserherstellers; direkt aufs Gerät kann niemand zustellen. Lesen kann er die
+Nachricht aber nicht: sie ist nach RFC 8291 für genau ein Gerät verschlüsselt.
+Google sieht, dass etwas unterwegs ist, nicht den Dateinamen.
+
+Drei Teile, alle in `src/push.js`, alle über WebCrypto und ohne Abhängigkeit:
+
+- **VAPID** (RFC 8292) – ein ES256-signiertes JWT pro Zustellung. Ohne das
+  nimmt kein Push-Dienst etwas an.
+- **Verschlüsselung** (RFC 8291 über RFC 8188) – ECDH mit einem frischen
+  Wegwerf-Schlüssel je Nachricht, HKDF, AES-128-GCM.
+- **Zustellung** – ein POST an die Adresse aus dem Abo. `404` und `410` heißen:
+  das Gerät hat das Abo weggeworfen, die Zeile kann weg.
+
+### Warum minütlich statt beim Upload
+
+Benachrichtigt wird nicht beim Hochladen, sondern von einem Cron jede Minute.
+Der Grund ist der Normalfall: wer fünf Fotos auf einmal schickt, soll einmal
+„5 Dateien angekommen“ lesen und nicht fünfmal klingeln. Der Lauf schaut nach,
+was seit der letzten Meldung dazugekommen ist, und schickt genau eine
+Nachricht. Der Preis ist bis zu eine Minute Verzögerung – für einen Briefkasten
+belanglos.
+
+Ohne angemeldetes Gerät endet der Lauf nach einer einzigen Abfrage, ohne
+Schreibzugriff. Das ist der Normalfall, 1440-mal am Tag.
+
+Die Marke `last_push` sagt, bis wohin schon gemeldet wurde. Sie wird beim
+**ersten** Abo auf „jetzt“ gesetzt – sonst käme beim Einschalten alles nach,
+was ohnehin schon im Briefkasten liegt.
+
+### Einrichten
+
+```bash
+node tools/make-vapid.mjs        # gibt beide Schlüssel aus
+npx wrangler secret put VAPID_PUBLIC
+npx wrangler secret put VAPID_PRIVATE
+```
+
+Ohne diese zwei Secrets verschwindet der Schalter und der Cron-Lauf tut nichts.
+Ein neues Schlüsselpaar macht alle bestehenden Abos ungültig; dann muss jedes
+Gerät die Benachrichtigungen einmal neu einschalten.
+
+Auf dem iPhone gibt es Web Push **nur**, wenn die Seite vom Startbildschirm
+gestartet wurde – im normalen Safari-Tab existiert `Notification` schlicht
+nicht. Steht die Seite dort nicht, zeigt der Fuß statt des Schalters den
+Hinweis, sie hinzuzufügen.
+
 ## Limits
 
 |                        | ohne Code | mit 2FA-Code |
@@ -212,6 +267,9 @@ geprüft, und `tools/test-api.mjs` versucht genau das zu umgehen.
 - Auch das Sammellöschen fasst nur Schlüssel an, die in der Datenbank stehen
   und zu einem fertigen Upload gehören – und nur die, die der Browser
   ausdrücklich mitschickt. Es gibt keinen Aufruf, der „den Rest“ löscht.
+- Benachrichtigungen bekommt nur, wer freigeschaltet ist. Die Adresse, an die
+  zugestellt wird, muss `https` sein – sonst ließe sich der Worker als Bote für
+  beliebige Ziele benutzen.
 - Downloads gehen immer als `application/octet-stream` mit
   `Content-Disposition: attachment` raus. Sonst ließe sich hochgeladenes HTML
   unter upload.veerka.mp im Browser ausführen.
@@ -236,6 +294,11 @@ npx wrangler d1 execute upload-meta --remote --file=schema.sql
 # Secrets: TOTP_SECRET ist ein Base32-Schlüssel, SESSION_SECRET beliebig zufällig
 npx wrangler secret put TOTP_SECRET
 npx wrangler secret put SESSION_SECRET
+
+# Optional, für Benachrichtigungen – siehe oben
+node tools/make-vapid.mjs
+npx wrangler secret put VAPID_PUBLIC
+npx wrangler secret put VAPID_PRIVATE
 ```
 
 Für lokale Tests dieselben zwei Werte in eine `.dev.vars` legen – die Datei

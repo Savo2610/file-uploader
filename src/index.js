@@ -1,6 +1,7 @@
 import {
   randomToken, sha256Hex, verifyTotp, signSession, verifySession,
 } from './crypto.js';
+import { senden } from './push.js';
 
 // ── Stellschrauben ──────────────────────────────────────────────────────────
 
@@ -56,6 +57,10 @@ const PART_SIZE = 10 * 1024 * 1024;
 
 const DAY_MS  = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
+
+// Muss wörtlich mit dem Eintrag in wrangler.jsonc übereinstimmen: daran
+// erkennt der scheduled-Handler, welcher der beiden Läufe ihn gerufen hat.
+const CRON_AUFRAEUMEN = '7 4 * * *';
 
 // ── Antwort-Hilfen ──────────────────────────────────────────────────────────
 
@@ -201,6 +206,9 @@ async function handleStatus(request, env) {
     twoFactorConfigured: Boolean(env.TOTP_SECRET && env.SESSION_SECRET),
     maxNoteChars: LIMITS.maxNoteChars,
     retentionDays: LIMITS.fileRetentionDays,
+    // Der öffentliche Teil des VAPID-Schlüssels ist zum Herzeigen gedacht –
+    // der Browser braucht ihn, um sich beim Push-Dienst anzumelden.
+    pushPublicKey: pushEingerichtet(env) ? env.VAPID_PUBLIC : null,
     // Nur gesetzt, wenn eben verlängert wurde – sonst gar nicht erst im Feld.
     ...(renewed ? { token: renewed, expiresIn: session.ttl } : {}),
     // Damit die Seite sagen kann, bis wann sie ohne Code auskommt.
@@ -615,6 +623,137 @@ async function handlePurge(request, env) {
   return json({ ok: true, files: zuLoeschen.length, notes: texteWeg.length });
 }
 
+// ── Routen: Benachrichtigungen ──────────────────────────────────────────────
+//
+// Nur mit Freischaltung: wer benachrichtigt wird, wenn hier etwas ankommt,
+// soll nicht davon abhängen, wer die Adresse kennt.
+
+const pushEingerichtet = env => Boolean(env.VAPID_PUBLIC && env.VAPID_PRIVATE);
+
+async function handlePushSubscribe(request, env) {
+  if (!(await isElevated(request, env))) return fail(401, 'Nicht freigeschaltet.');
+  if (!pushEingerichtet(env)) return fail(503, 'Benachrichtigungen sind auf dem Server nicht eingerichtet.');
+
+  let body;
+  try { body = await request.json(); } catch { return fail(400, 'Ungültige Anfrage.'); }
+
+  const endpoint = String(body?.endpoint ?? '');
+  const p256dh   = String(body?.p256dh ?? '');
+  const auth     = String(body?.auth ?? '');
+
+  // Die Adresse kommt vom Browser und wird angefragt, sobald etwas ankommt.
+  // Ohne diese Prüfung ließe sich der Worker als Bote für beliebige Ziele
+  // benutzen.
+  let ziel;
+  try { ziel = new URL(endpoint); } catch { return fail(400, 'Unbrauchbare Adresse.'); }
+  if (ziel.protocol !== 'https:') return fail(400, 'Unbrauchbare Adresse.');
+  if (!p256dh || !auth) return fail(400, 'Es fehlen die Schlüssel des Geräts.');
+
+  const schon = await env.DB.prepare('SELECT COUNT(*) AS n FROM push_subs').first();
+
+  await env.DB.prepare(`
+    INSERT INTO push_subs (endpoint, p256dh, auth, created_at) VALUES (?, ?, ?, ?)
+    ON CONFLICT(endpoint) DO UPDATE SET p256dh = excluded.p256dh, auth = excluded.auth
+  `).bind(endpoint, p256dh, auth, Date.now()).run();
+
+  // Mit dem ersten Gerät fängt die Zeitrechnung an. Ohne das käme sofort alles
+  // nach, was schon im Briefkasten liegt – und beim erneuten Anmelden nach
+  // einer Pause alles, was in der Zwischenzeit angekommen ist.
+  if ((schon?.n ?? 0) === 0) await marke(env, Date.now());
+
+  return json({ ok: true });
+}
+
+async function handlePushUnsubscribe(request, env) {
+  if (!(await isElevated(request, env))) return fail(401, 'Nicht freigeschaltet.');
+
+  let body;
+  try { body = await request.json(); } catch { return fail(400, 'Ungültige Anfrage.'); }
+
+  await env.DB.prepare('DELETE FROM push_subs WHERE endpoint = ?')
+    .bind(String(body?.endpoint ?? '')).run();
+  return json({ ok: true });
+}
+
+// ── Benachrichtigen ─────────────────────────────────────────────────────────
+//
+// Läuft nicht beim Upload, sondern minütlich als Cron. Der Grund ist der
+// Normalfall: wer fünf Fotos auf einmal schickt, soll einmal „5 Dateien
+// angekommen“ lesen und nicht fünfmal klingeln. Der Preis ist bis zu eine
+// Minute Verzögerung – für einen Briefkasten belanglos.
+
+async function marke(env, wert) {
+  await env.DB.prepare(
+    "INSERT INTO push_state (key, value) VALUES ('last_push', ?) "
+    + 'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+  ).bind(String(wert)).run();
+}
+
+// Baut die Meldung. Getrennt vom Versand, damit sie sich prüfen lässt.
+export function meldung(dateien, texte) {
+  const teile = [];
+  if (dateien.length) teile.push(dateien.length === 1 ? 'eine Datei' : `${dateien.length} Dateien`);
+  if (texte)          teile.push(texte === 1 ? 'ein Text' : `${texte} Texte`);
+
+  const satz = teile.join(' und ');
+  return {
+    titel: satz.charAt(0).toUpperCase() + satz.slice(1) + ' angekommen',
+    // Der Name der neuesten Datei als Vorschau. Er ist Ende-zu-Ende
+    // verschlüsselt – der Push-Dienst sieht ihn nicht.
+    text: dateien[0] ?? 'Texte & Links stehen auf der Abhol-Seite.',
+  };
+}
+
+async function benachrichtigen(env) {
+  if (!pushEingerichtet(env)) return 0;
+
+  // Ohne Empfänger endet der Lauf nach einer Abfrage – ohne Schreibzugriff.
+  // Das ist der Normalfall, 1440-mal am Tag.
+  const abos = (await env.DB.prepare('SELECT endpoint, p256dh, auth FROM push_subs').all()).results ?? [];
+  if (!abos.length) return 0;
+
+  const seit = Number((await env.DB.prepare("SELECT value FROM push_state WHERE key = 'last_push'").first())?.value ?? 0);
+  const jetzt = Date.now();
+  if (!seit) {
+    await marke(env, jetzt);
+    return 0;
+  }
+
+  const [dateien, texte] = await env.DB.batch([
+    env.DB.prepare('SELECT file_name FROM uploads WHERE completed_at > ? ORDER BY completed_at DESC LIMIT 50')
+      .bind(seit),
+    env.DB.prepare('SELECT COUNT(*) AS n FROM notes WHERE created_at > ?').bind(seit),
+  ]);
+
+  const namen   = (dateien.results ?? []).map(r => r.file_name);
+  const anzahlT = texte.results?.[0]?.n ?? 0;
+  if (!namen.length && !anzahlT) return 0;
+
+  const nutzlast = JSON.stringify(meldung(namen, anzahlT));
+
+  let zugestellt = 0;
+  for (const abo of abos) {
+    try {
+      const res = await senden(abo, nutzlast, env);
+      if (res.status === 404 || res.status === 410) {
+        // Das Gerät hat das Abo weggeworfen. Nachfassen bringt nichts mehr.
+        await env.DB.prepare('DELETE FROM push_subs WHERE endpoint = ?').bind(abo.endpoint).run();
+      } else if (res.ok) {
+        zugestellt++;
+      } else {
+        console.error('Push abgelehnt:', res.status, await res.text());
+      }
+    } catch (err) {
+      console.error('Push fehlgeschlagen:', err?.message || err);
+    }
+  }
+
+  // Die Marke wandert auch dann weiter, wenn nichts zugestellt werden konnte:
+  // sonst stünde beim nächsten Lauf dieselbe Meldung noch einmal an.
+  await marke(env, jetzt);
+  return zugestellt;
+}
+
 // ── Nächtlicher Aufräumlauf ─────────────────────────────────────────────────
 //
 // R2 rechnet nach liegendem Speicher ab. Ohne das hier bliebe jede jemals
@@ -658,6 +797,7 @@ const ROUTES_UPLOAD = new Set([
 const ROUTES_DOWNLOAD = new Set([
   '/api/status', '/api/unlock', '/api/logout',
   '/api/files', '/api/files/download', '/api/notes', '/api/purge',
+  '/api/push/subscribe', '/api/push/unsubscribe',
 ]);
 
 // Statische Dateien, die es unter beiden Adressen gibt.
@@ -721,6 +861,8 @@ export default {
       if (path === '/api/files'           && del)                      return await handleFileDelete(request, env, url);
       if (path === '/api/files/download'  && request.method === 'GET') return await handleDownload(request, env, url);
       if (path === '/api/purge'           && post)                     return await handlePurge(request, env);
+      if (path === '/api/push/subscribe'  && post)                     return await handlePushSubscribe(request, env);
+      if (path === '/api/push/unsubscribe'&& post)                     return await handlePushUnsubscribe(request, env);
       if (path === '/api/note'            && post)                     return await handleNote(request, env);
       if (path === '/api/notes'           && request.method === 'GET') return await handleNotesList(request, env);
       if (path === '/api/notes'           && del)                      return await handleNoteDelete(request, env, url);
@@ -731,12 +873,19 @@ export default {
     }
   },
 
-  // Läuft nach dem Zeitplan aus wrangler.jsonc.
+  // Läuft nach dem Zeitplan aus wrangler.jsonc. Zwei Zeitpläne, zwei Aufgaben –
+  // unterschieden am Ausdruck selbst, damit nicht der minütliche Lauf jede
+  // Nacht zusätzlich aufräumt.
   async scheduled(event, env, ctx) {
     ctx.waitUntil((async () => {
-      const removed = await purgeOld(env);
-      await cleanup(env);
-      console.log(`Aufräumlauf: ${removed} Datei(en) gelöscht.`);
+      if (event.cron === CRON_AUFRAEUMEN) {
+        const removed = await purgeOld(env);
+        await cleanup(env);
+        console.log(`Aufräumlauf: ${removed} Datei(en) gelöscht.`);
+        return;
+      }
+      const zugestellt = await benachrichtigen(env);
+      if (zugestellt) console.log(`Benachrichtigung an ${zugestellt} Gerät(e).`);
     })());
   },
 };

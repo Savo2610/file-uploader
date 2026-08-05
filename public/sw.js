@@ -40,6 +40,45 @@ self.addEventListener('activate', event => {
   })());
 });
 
+// ── Benachrichtigungen ──────────────────────────────────────────────────────
+//
+// Die Nutzlast kommt verschlüsselt an; entschlüsselt hat sie der Browser
+// bereits, bevor er hier ankommt. Der Push-Dienst dazwischen hat den
+// Dateinamen nie gesehen.
+
+self.addEventListener('push', event => {
+  let daten = {};
+  try { daten = event.data ? event.data.json() : {}; } catch { /* dann eben ohne */ }
+
+  // Angemeldet wurde mit userVisibleOnly – es MUSS also etwas angezeigt
+  // werden, auch wenn die Nutzlast unterwegs verloren ging.
+  event.waitUntil(self.registration.showNotification(
+    daten.titel || 'Etwas ist angekommen',
+    {
+      body: daten.text || '',
+      icon: '/icons/abholen-192.png',
+      badge: '/icons/abholen-192.png',
+      // Gleicher tag: eine neue Meldung ersetzt die alte, statt sich zu
+      // stapeln. Die Zahl steht ohnehin schon im Titel.
+      tag: 'abholen',
+      renotify: true,
+    },
+  ));
+});
+
+self.addEventListener('notificationclick', event => {
+  event.notification.close();
+  event.waitUntil((async () => {
+    // Ist die App schon offen, dorthin – sonst öffnet jeder Tipp einen
+    // weiteren Tab.
+    const offen = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    for (const c of offen) {
+      if (new URL(c.url).origin === self.location.origin) return c.focus();
+    }
+    return self.clients.openWindow('/');
+  })());
+});
+
 self.addEventListener('fetch', event => {
   const { request } = event;
   const url = new URL(request.url);

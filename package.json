@@ -1,6 +1,7 @@
 {
   "name": "file-uploader",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "wrangler dev --port 8788",
     "dev:download": "wrangler dev --port 8789 --host download.veerka.mp",

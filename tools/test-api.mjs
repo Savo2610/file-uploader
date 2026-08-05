@@ -494,6 +494,197 @@ for (const pfad of ['/download.webmanifest', '/sw.js', '/icons/abholen-512.png']
   check(`${pfad} auf der Upload-Adresse nicht vorhanden`, res.status === 404, 'HTTP ' + res.status);
 }
 
+console.log('\nBenachrichtigungen');
+
+const pushAnon = await post('/api/push/subscribe',
+  { endpoint: 'https://example.com/x', p256dh: 'a', auth: 'b' }, null, DL);
+check('Anmelden ohne Freischaltung gesperrt', pushAnon.status === 401, 'HTTP ' + pushAnon.status);
+
+const pushHttp = await post('/api/push/subscribe',
+  { endpoint: 'http://example.com/x', p256dh: 'a', auth: 'b' }, token, DL);
+check('Adresse ohne https abgelehnt', pushHttp.status === 400, 'HTTP ' + pushHttp.status);
+
+const pushKrumm = await post('/api/push/subscribe',
+  { endpoint: 'keine-adresse', p256dh: 'a', auth: 'b' }, token, DL);
+check('unbrauchbare Adresse abgelehnt', pushKrumm.status === 400, 'HTTP ' + pushKrumm.status);
+
+const pushOhneSchluessel = await post('/api/push/subscribe',
+  { endpoint: 'https://example.com/x' }, token, DL);
+check('Anmeldung ohne Geräteschlüssel abgelehnt', pushOhneSchluessel.status === 400,
+  'HTTP ' + pushOhneSchluessel.status);
+
+// Ein echtes Abo nachbauen, wie es der Browser schicken würde.
+const geraet = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+const geraetPub = new Uint8Array(await crypto.subtle.exportKey('raw', geraet.publicKey));
+const geraetAuth = crypto.getRandomValues(new Uint8Array(16));
+const abo = {
+  endpoint: 'https://fcm.googleapis.com/fcm/send/TESTLAUF-' + Date.now(),
+  p256dh: Buffer.from(geraetPub).toString('base64url'),
+  auth:   Buffer.from(geraetAuth).toString('base64url'),
+};
+
+const pushAn = await post('/api/push/subscribe', abo, token, DL);
+check('Anmelden mit Freischaltung angenommen', pushAn.status === 200, 'HTTP ' + pushAn.status);
+
+const pushNochmal = await post('/api/push/subscribe', abo, token, DL);
+check('zweimal dasselbe Gerät bleibt ein Eintrag', pushNochmal.status === 200,
+  'HTTP ' + pushNochmal.status);
+
+const statusPush = await (await fetch(DL + '/api/status')).json();
+check('Status nennt den öffentlichen Schlüssel',
+  typeof statusPush.pushPublicKey === 'string' && statusPush.pushPublicKey.length > 80,
+  String(statusPush.pushPublicKey).slice(0, 20));
+
+const pushAus = await post('/api/push/unsubscribe', { endpoint: abo.endpoint }, token, DL);
+check('Abmelden angenommen', pushAus.status === 200, 'HTTP ' + pushAus.status);
+
+const pushAufUpload = await post('/api/push/subscribe', abo, token, UP);
+check('Anmelden auf der Upload-Seite nicht vorhanden', pushAufUpload.status === 404,
+  'HTTP ' + pushAufUpload.status);
+
+console.log('\nZustellung einer Benachrichtigung');
+
+// Hier läuft ein eigener kleiner Push-Dienst mit, und geprüft wird genau das,
+// was bei ihm ankommt. An Google lässt sich im Test nicht zustellen, aber die
+// Nachricht muss trotzdem bis aufs Byte stimmen: ein falsches Feld, und das
+// Handy verwirft sie stillschweigend.
+const { senden, vapidSchluesselpaar } = await import('../src/push.js');
+const { meldung } = await import('../src/index.js');
+const { createServer } = await import('node:http');
+
+let antwortStatus = 201;
+let empfangen = null;
+const dienst = createServer((req, res) => {
+  const stuecke = [];
+  req.on('data', c => stuecke.push(c));
+  req.on('end', () => {
+    empfangen = { methode: req.method, kopf: req.headers, koerper: Buffer.concat(stuecke) };
+    res.writeHead(antwortStatus).end();
+  });
+});
+await new Promise(r => dienst.listen(0, '127.0.0.1', r));
+const dienstAdresse = `http://127.0.0.1:${dienst.address().port}/push/xyz`;
+
+const paar = await vapidSchluesselpaar();
+const testEnv = { VAPID_PUBLIC: paar.oeffentlich, VAPID_PRIVATE: paar.geheim };
+const nutzlast = JSON.stringify(meldung(['Ümlaut & "Zeichen".txt', 'b', 'c'], 1));
+
+const antwort = await senden({ ...abo, endpoint: dienstAdresse }, nutzlast, testEnv);
+check('der Push-Dienst nimmt die Nachricht an', antwort.status === 201, 'HTTP ' + antwort.status);
+check('sie geht als POST raus', empfangen?.methode === 'POST', empfangen?.methode);
+check('Content-Encoding sagt aes128gcm', empfangen?.kopf['content-encoding'] === 'aes128gcm',
+  empfangen?.kopf['content-encoding']);
+check('ein TTL liegt bei', Number(empfangen?.kopf.ttl) > 0, empfangen?.kopf.ttl);
+
+// ── Der Kopf: VAPID ─────────────────────────────────────────────────────────
+
+const teile = /^vapid t=([\w-]+)\.([\w-]+)\.([\w-]+), k=([\w-]+)$/.exec(empfangen?.kopf.authorization ?? '');
+check('VAPID-Header hat die vorgeschriebene Form', Boolean(teile),
+  String(empfangen?.kopf.authorization).slice(0, 40));
+check('der mitgeschickte Schlüssel ist der öffentliche', teile?.[4] === paar.oeffentlich);
+
+const rumpf = JSON.parse(Buffer.from(teile[2], 'base64url').toString());
+check('das JWT gilt dem Push-Dienst, nicht dem Gerät',
+  rumpf.aud === `http://127.0.0.1:${dienst.address().port}`, rumpf.aud);
+check('das JWT läuft ab', rumpf.exp > Math.floor(Date.now() / 1000)
+  && rumpf.exp <= Math.floor(Date.now() / 1000) + 12 * 60 * 60);
+
+const pruefKey = await crypto.subtle.importKey('raw',
+  new Uint8Array(Buffer.from(paar.oeffentlich, 'base64url')),
+  { name: 'ECDSA', namedCurve: 'P-256' }, false, ['verify']);
+check('die Signatur passt zum öffentlichen Schlüssel',
+  await crypto.subtle.verify({ name: 'ECDSA', hash: 'SHA-256' }, pruefKey,
+    new Uint8Array(Buffer.from(teile[3], 'base64url')),
+    new TextEncoder().encode(`${teile[1]}.${teile[2]}`)));
+
+// ── Der Rumpf: nur das Gerät kann ihn lesen ─────────────────────────────────
+
+const enc = new TextEncoder();
+const kette = (...t) => {
+  const o = new Uint8Array(t.reduce((n, x) => n + x.length, 0));
+  let i = 0; for (const x of t) { o.set(x, i); i += x.length; }
+  return o;
+};
+async function hkdf(salt, ikm, info, len) {
+  const k = await crypto.subtle.importKey('raw', ikm, 'HKDF', false, ['deriveBits']);
+  return new Uint8Array(await crypto.subtle.deriveBits({ name: 'HKDF', hash: 'SHA-256', salt, info }, k, len * 8));
+}
+
+const koerper  = new Uint8Array(empfangen.koerper);
+const salz     = koerper.subarray(0, 16);
+const idlen    = koerper[20];
+const serverP  = koerper.subarray(21, 21 + idlen);
+const chiffre  = koerper.subarray(21 + idlen);
+
+check('Kopf trägt den unkomprimierten Serverschlüssel', idlen === 65, String(idlen));
+check('der Klartext steht nicht im Rumpf',
+  !empfangen.koerper.includes(Buffer.from('Ümlaut', 'utf8')));
+
+const serverKey = await crypto.subtle.importKey('raw', serverP, { name: 'ECDH', namedCurve: 'P-256' }, false, []);
+const gemeinsam = new Uint8Array(await crypto.subtle.deriveBits(
+  { name: 'ECDH', public: serverKey }, geraet.privateKey, 256));
+const ikm = await hkdf(geraetAuth, gemeinsam,
+  kette(enc.encode('WebPush: info\0'), geraetPub, serverP), 32);
+const cek   = await hkdf(salz, ikm, enc.encode('Content-Encoding: aes128gcm\0'), 16);
+const nonce = await hkdf(salz, ikm, enc.encode('Content-Encoding: nonce\0'), 12);
+
+let entschluesselt = null;
+try {
+  const k = await crypto.subtle.importKey('raw', cek, 'AES-GCM', false, ['decrypt']);
+  const roh = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce }, k, chiffre));
+  check('letzter Datensatz ist als solcher markiert', roh[roh.length - 1] === 2, String(roh[roh.length - 1]));
+  entschluesselt = new TextDecoder().decode(roh.subarray(0, roh.length - 1));
+} catch (err) {
+  check('Nachricht lässt sich mit dem Geräteschlüssel entschlüsseln', false, err.message);
+}
+check('Nachricht kommt unverändert beim Gerät an', entschluesselt === nutzlast,
+  String(entschluesselt).slice(0, 60));
+
+// Ein fremdes Gerät darf nichts damit anfangen können.
+const fremd = await crypto.subtle.generateKey({ name: 'ECDH', namedCurve: 'P-256' }, true, ['deriveBits']);
+const fremdGemeinsam = new Uint8Array(await crypto.subtle.deriveBits(
+  { name: 'ECDH', public: serverKey }, fremd.privateKey, 256));
+const fremdIkm = await hkdf(geraetAuth, fremdGemeinsam,
+  kette(enc.encode('WebPush: info\0'), geraetPub, serverP), 32);
+const fremdCek = await hkdf(salz, fremdIkm, enc.encode('Content-Encoding: aes128gcm\0'), 16);
+let fremdKlappt = false;
+try {
+  const k = await crypto.subtle.importKey('raw', fremdCek, 'AES-GCM', false, ['decrypt']);
+  await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce }, k, chiffre);
+  fremdKlappt = true;
+} catch { /* genau so soll es sein */ }
+check('ein anderer Schlüssel öffnet sie nicht', !fremdKlappt);
+
+// Zweimal dieselbe Nachricht darf nicht zweimal gleich aussehen.
+empfangen = null;
+await senden({ ...abo, endpoint: dienstAdresse }, nutzlast, testEnv);
+const zweiter = new Uint8Array(empfangen.koerper);
+check('jede Nachricht bekommt ein eigenes Salz',
+  Buffer.compare(Buffer.from(salz), Buffer.from(zweiter.subarray(0, 16))) !== 0);
+check('jede Nachricht bekommt einen eigenen Serverschlüssel',
+  Buffer.compare(Buffer.from(serverP), Buffer.from(zweiter.subarray(21, 86))) !== 0);
+
+// Ein Gerät, das sein Abo weggeworfen hat, meldet 410 – daran erkennt der
+// Aufräumteil, dass die Zeile weg kann.
+antwortStatus = 410;
+const tot = await senden({ ...abo, endpoint: dienstAdresse }, nutzlast, testEnv);
+check('ein weggeworfenes Abo ist am Status erkennbar', tot.status === 410, 'HTTP ' + tot.status);
+
+dienst.close();
+
+console.log('\nText der Benachrichtigung');
+
+check('eine Datei wird im Singular gemeldet',
+  meldung(['eins.txt'], 0).titel === 'Eine Datei angekommen', meldung(['eins.txt'], 0).titel);
+check('mehrere werden gezählt',
+  meldung(['a', 'b', 'c'], 0).titel === '3 Dateien angekommen', meldung(['a', 'b', 'c'], 0).titel);
+check('Dateien und Texte zusammen',
+  meldung(['a'], 2).titel === 'Eine Datei und 2 Texte angekommen', meldung(['a'], 2).titel);
+check('nur Texte',
+  meldung([], 1).titel === 'Ein Text angekommen', meldung([], 1).titel);
+check('der Name der neuesten Datei ist die Vorschau',
+  meldung(['neu.txt', 'alt.txt'], 0).text === 'neu.txt');
+
 console.log('\nTageskontingent');
 
 const statusNow = await (await fetch(UP + '/api/status')).json();

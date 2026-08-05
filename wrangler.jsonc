@@ -39,10 +39,19 @@
     }
   ],
 
-  // Nächtlicher Aufräumlauf: löscht Dateien, die älter als die Aufbewahrungs-
-  // frist in src/index.js sind. 4:07 UTC, damit es nicht zur vollen Stunde
-  // gemeinsam mit allen anderen Cron-Jobs der Welt losgeht.
-  "triggers": { "crons": ["7 4 * * *"] },
+  // Zwei Zeitpläne, unterschieden in src/index.js am Ausdruck selbst:
+  //
+  //   7 4 * * *  – nächtlicher Aufräumlauf: löscht Dateien, die älter als die
+  //                Aufbewahrungsfrist in src/index.js sind. 4:07 UTC, damit es
+  //                nicht zur vollen Stunde gemeinsam mit allen anderen
+  //                Cron-Jobs der Welt losgeht.
+  //   * * * * *  – schaut nach, ob seit der letzten Meldung etwas angekommen
+  //                ist, und schickt dann EINE Benachrichtigung. Minütlich statt
+  //                beim Upload selbst, damit fünf Fotos auf einmal nicht
+  //                fünfmal klingeln. 1440 Läufe am Tag sind gegenüber den
+  //                Kontingenten belanglos, und ohne Abo endet ein Lauf nach
+  //                einer einzigen Abfrage.
+  "triggers": { "crons": ["7 4 * * *", "* * * * *"] },
 
   "observability": { "enabled": true }
 }

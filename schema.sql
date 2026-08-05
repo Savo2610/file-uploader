@@ -61,3 +61,25 @@ CREATE TABLE IF NOT EXISTS notes (
 );
 
 CREATE INDEX IF NOT EXISTS notes_created_at ON notes (created_at);
+
+-- Geräte, die eine Benachrichtigung bekommen, wenn etwas ankommt. Ein Eintrag
+-- je Browser und Gerät. Die Adresse zeigt auf den Push-Dienst des jeweiligen
+-- Herstellers und ist gleichzeitig der Schlüssel: meldet sich dasselbe Gerät
+-- erneut an, ersetzt der Eintrag den alten.
+--
+-- p256dh und auth gehören dem Gerät. Mit ihnen wird die Nachricht so
+-- verschlüsselt, dass nur dieses eine Gerät sie lesen kann – der Push-Dienst
+-- dazwischen sieht nur, dass etwas unterwegs ist.
+CREATE TABLE IF NOT EXISTS push_subs (
+  endpoint   TEXT PRIMARY KEY,
+  p256dh     TEXT NOT NULL,
+  auth       TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
+
+-- Bis wohin wurde schon benachrichtigt. Ohne diese Marke käme beim ersten Lauf
+-- alles nach, was jemals hochgeladen wurde.
+CREATE TABLE IF NOT EXISTS push_state (
+  key   TEXT PRIMARY KEY,
+  value TEXT NOT NULL
+);
