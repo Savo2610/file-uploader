@@ -803,10 +803,13 @@ const ROUTES_DOWNLOAD = new Set([
 // Statische Dateien, die es unter beiden Adressen gibt.
 const gemeinsam = path => path === '/style.css' || path.startsWith('/favicon');
 
-// Zubehör der Abhol-App: Manifest, Symbole, Service Worker. Gehört nur unter
-// die Abhol-Adresse – dort wird die App installiert, nicht auf der Upload-Seite.
+// Zubehör der Abhol-App: Manifest, Symbole, Service Worker, QR-Code. Gehört nur
+// unter die Abhol-Adresse – dort wird die App installiert, nicht auf der
+// Upload-Seite. Der QR-Code zeigt ohnehin dorthin: wer schon auf upload.veerka.mp
+// steht, braucht ihn nicht.
 const abholZubehoer = path =>
-  path === '/download.webmanifest' || path === '/sw.js' || path.startsWith('/icons/');
+  path === '/download.webmanifest' || path === '/sw.js' || path === '/qr.svg'
+  || path.startsWith('/icons/');
 
 export default {
   async fetch(request, env, ctx) {

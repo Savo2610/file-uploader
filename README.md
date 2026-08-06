@@ -44,6 +44,7 @@ node tools/cleanup-tests.mjs --remote
 | `public/download.webmanifest` | macht die Abhol-Seite installierbar           |
 | `public/sw.js`       | Service Worker der Abhol-Seite                         |
 | `public/icons/`      | die Symbole für den Startbildschirm                    |
+| `public/qr.svg`      | der QR-Code auf `upload.veerka.mp`                     |
 | `src/index.js`       | die API, und welche Route unter welchem Host existiert |
 | `src/crypto.js`      | TOTP nach RFC 6238 und signierte Sitzungstoken         |
 | `src/push.js`        | Web Push: VAPID und die Verschlüsselung der Nutzlast    |
@@ -51,6 +52,7 @@ node tools/cleanup-tests.mjs --remote
 | `tools/test-api.mjs` | 102 Tests, vor allem gegen Umgehungsversuche           |
 | `tools/cleanup-tests.mjs` | räumt nur die Testdateien weg, nichts sonst      |
 | `tools/make-icons.mjs` | zeichnet die Symbole in `public/icons/`              |
+| `tools/make-qr.mjs`  | QR-Encoder nach ISO 18004, schreibt `public/qr.svg`    |
 | `tools/make-vapid.mjs` | erzeugt einmalig das Schlüsselpaar für Web Push      |
 | `TEXT_INPUT_FEATURE.md` | Notiz zu einer noch nicht gebauten Idee            |
 
@@ -156,6 +158,24 @@ Projekt hängt.
 
 Manifest, Symbole und Service Worker gibt es nur unter der Abhol-Adresse; unter
 `upload.veerka.mp` antworten sie mit 404, wie die Abhol-Seite selbst.
+
+## QR-Code zum Herzeigen
+
+Im Fuß der Abhol-Seite steht **QR zum Einwerfen**. Ein Tipp legt den Code groß
+über die Seite: jemand hält sein Handy davor und landet auf `upload.veerka.mp`,
+ohne die Adresse abzutippen.
+
+Er zeigt bewusst auf die **Upload**-Adresse und nicht auf diese hier – er ist
+zum Herzeigen da, damit ein anderer etwas einwerfen kann. Wer schon auf der
+Abhol-Seite steht, braucht ihn nicht.
+
+Gerechnet wird er nicht im Browser: die Adresse ändert sich nie, also liegt er
+fertig als `public/qr.svg` im Repo. `npm run qr` zeichnet ihn neu.
+`tools/make-qr.mjs` ist ein vollständiger Encoder nach ISO/IEC 18004
+(Byte-Modus, Reed-Solomon über GF(256)), ohne Abhängigkeiten wie alles hier.
+
+Wie Manifest, Symbole und Service Worker gehört `qr.svg` zum Zubehör der
+Abhol-Adresse: unter `upload.veerka.mp` antwortet es mit 404.
 
 ## Benachrichtigung, wenn etwas ankommt
 

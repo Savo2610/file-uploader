@@ -107,6 +107,16 @@
   </footer>
 </div>
 
+<!-- Zum Herzeigen: jemand hält sein Handy davor und landet im Briefkasten,
+     ohne die Adresse abtippen zu müssen. Der Code steht fertig als /qr.svg im
+     Repo (tools/make-qr.mjs) – die Adresse ändert sich nie, also muss dafür
+     kein Encoder in die Seite. -->
+<div class="qr-overlay" id="qr-overlay">
+  <div class="qr-karte"><img src="/qr.svg" alt="QR-Code zu upload.veerka.mp" /></div>
+  <p class="qr-adresse">upload.veerka.mp</p>
+  <p class="qr-hinweis">zum Schließen tippen</p>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -214,6 +224,7 @@
     document.getElementById('gate').style.display = 'none';
     document.getElementById('inhalt').classList.add('visible');
     document.getElementById('untertitel').textContent = 'Alles, was bei mir angekommen ist.';
+    zeigeQr();
     zeigeAbmelden();
     zeigePush();
     loadFiles();
@@ -239,6 +250,20 @@
     box.append(trenner, knopf);
     document.getElementById('footer').appendChild(box);
     return knopf;
+  }
+
+  // Der QR-Code zeigt auf die Upload-Adresse, nicht auf diese hier: er ist zum
+  // Herzeigen da, damit jemand anders etwas einwerfen kann. Wer schon hier
+  // steht, braucht ihn nicht.
+  function zeigeQr() {
+    if (document.getElementById('qr-box')) return;
+    const overlay = document.getElementById('qr-overlay');
+    const zu = () => overlay.classList.remove('offen');
+    // Irgendwohin tippen schließt – die Fläche ist die Schaltfläche, damit man
+    // beim Wegräumen nicht erst ein kleines Kreuz treffen muss.
+    overlay.onclick = zu;
+    addEventListener('keydown', e => { if (e.key === 'Escape') zu(); });
+    fussKnopf('qr', 'QR zum Einwerfen', () => overlay.classList.add('offen'));
   }
 
   function zeigeAbmelden() {
@@ -652,8 +677,10 @@
     melde('');
     document.getElementById('gate').style.display = '';
     document.getElementById('inhalt').classList.remove('visible');
+    document.getElementById('qr-box')?.remove();
     document.getElementById('abmelden-box')?.remove();
     document.getElementById('push-box')?.remove();
+    document.getElementById('qr-overlay').classList.remove('offen');
     showToast('Sitzung abgelaufen – bitte neuen Code eingeben', 'error');
   }
 

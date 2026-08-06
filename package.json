@@ -7,6 +7,7 @@
     "dev:download": "wrangler dev --port 8789 --host download.veerka.mp",
     "test": "node tools/test-api.mjs",
     "cleanup": "node tools/cleanup-tests.mjs",
+    "qr": "node tools/make-qr.mjs",
     "deploy": "wrangler deploy"
   },
   "devDependencies": {

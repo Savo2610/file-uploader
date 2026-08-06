@@ -249,6 +249,55 @@ button.upload-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .limit-info span { color: var(--gold); font-weight: 500; }
 .limit-info span.unlocked { color: var(--success); }
 
+/* ── QR-Code ───────────────────────────────────────────────────────────────
+   Zum Herzeigen gedacht: jemand hält sein Handy davor. Deshalb liegt der Code
+   groß und mittig über allem, und deshalb ist die Karte hell – ein dunkler
+   Hintergrund kostet Lesegeräte spürbar Mühe. */
+
+.qr-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 1.1rem;
+  padding: 2rem;
+  /* Deckend und zusätzlich weichgezeichnet: was darunter liegt, soll das Auge
+     nicht mehr fangen, während jemand die Kamera draufhält. */
+  background: rgba(8, 7, 6, 0.96);
+  backdrop-filter: blur(6px);
+  cursor: pointer;
+  animation: fadeUp 0.25s ease both;
+}
+.qr-overlay.offen { display: flex; }
+
+.qr-karte {
+  background: var(--text);
+  border-radius: 3px;
+  padding: 0.9rem;
+  line-height: 0;
+  /* Quadratisch und so groß wie der kleinere Bildschirmrand es zulässt. */
+  width: min(340px, 74vmin);
+}
+.qr-karte img { width: 100%; height: auto; display: block; }
+
+.qr-adresse {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.8rem;
+  color: var(--gold);
+  text-align: center;
+  word-break: break-all;
+  max-width: 340px;
+}
+
+.qr-hinweis {
+  font-size: 0.7rem;
+  color: var(--muted);
+  text-align: center;
+}
+
 /* Toast */
 #toast {
   position: fixed; bottom: 2rem; left: 50%;
