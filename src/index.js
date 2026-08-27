@@ -782,6 +782,55 @@ async function purgeOld(env) {
   return keys.length;
 }
 
+// ── Von fremden Seiten aus ──────────────────────────────────────────────────
+
+// Die Kachel auf veerka.mp öffnet einen kleinen Briefkasten gleich im Dialog,
+// statt hierher zu schicken. Dafür muss der Browser die Antworten dieser
+// Routen von dort aus lesen dürfen.
+//
+// Erlaubt wird damit nichts Neues: anonym einwerfen darf ohnehin jeder, der
+// diese Seite aufruft, und jede Grenze prüft weiterhin der Worker. CORS regelt
+// allein, von welcher Seite aus der Browser die Antwort auslesen darf.
+const CORS_HERKUNFT = new Set(['https://veerka.mp', 'https://www.veerka.mp']);
+
+// Bewusst nur der Weg zum Einwerfen. /api/unlock steht nicht dabei: ein
+// Sitzungstoken für das 10-GB-Limit soll nur auf dieser Seite entstehen, nicht
+// im Speicher einer anderen. Ebenso wenig steht Authorization unten in den
+// erlaubten Kopfzeilen – ein vorhandenes Token nützt von fremd also nichts.
+const CORS_ROUTEN = new Set([
+  '/api/status', '/api/note',
+  '/api/upload/init', '/api/upload/part', '/api/upload/complete', '/api/upload/abort',
+]);
+
+function corsKopf(request, path, env) {
+  const herkunft = request.headers.get('Origin');
+  if (!herkunft || !CORS_ROUTEN.has(path)) return null;
+
+  // Beim lokalen Entwickeln liegt die einwerfende Seite auf einem
+  // localhost-Port. Welcher, steht in .dev.vars – einer Datei, die es in
+  // Produktion nicht gibt. Von allein erkennen ließe sich der Fall nicht:
+  // wrangler dev setzt Host und request.url auf die erste Route, localhost
+  // taucht dort nirgends auf.
+  const erlaubt = CORS_HERKUNFT.has(herkunft)
+    || (env.DEV_HERKUNFT && herkunft === env.DEV_HERKUNFT);
+  if (!erlaubt) return null;
+
+  return {
+    'Access-Control-Allow-Origin': herkunft,
+    // Ohne Vary könnte ein Zwischenspeicher die Antwort für die eine Herkunft
+    // an eine andere ausliefern.
+    'Vary': 'Origin',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'Access-Control-Max-Age': '86400',
+  };
+}
+
+const mitCors = (antwort, kopf) => {
+  if (kopf) for (const [name, wert] of Object.entries(kopf)) antwort.headers.set(name, wert);
+  return antwort;
+};
+
 // ── Verteiler ───────────────────────────────────────────────────────────────
 
 // Welche Route unter welchem Hostnamen überhaupt existiert. Die Trennung ist
@@ -810,6 +859,28 @@ const gemeinsam = path => path === '/style.css' || path.startsWith('/favicon');
 const abholZubehoer = path =>
   path === '/download.webmanifest' || path === '/sw.js' || path === '/qr.svg'
   || path.startsWith('/icons/');
+
+async function verteilen(path, request, env, ctx, url) {
+  const post = request.method === 'POST';
+  const del  = request.method === 'DELETE';
+  if (path === '/api/status'          && request.method === 'GET') return await handleStatus(request, env);
+  if (path === '/api/unlock'          && post)                     return await handleUnlock(request, env);
+  if (path === '/api/logout'          && post)                     return handleLogout(request);
+  if (path === '/api/upload/init'     && post)                     return await handleInit(request, env, ctx);
+  if (path === '/api/upload/part'     && request.method === 'PUT') return await handlePart(request, env, url);
+  if (path === '/api/upload/complete' && post)                     return await handleComplete(request, env);
+  if (path === '/api/upload/abort'    && post)                     return await handleAbort(request, env);
+  if (path === '/api/files'           && request.method === 'GET') return await handleList(request, env);
+  if (path === '/api/files'           && del)                      return await handleFileDelete(request, env, url);
+  if (path === '/api/files/download'  && request.method === 'GET') return await handleDownload(request, env, url);
+  if (path === '/api/purge'           && post)                     return await handlePurge(request, env);
+  if (path === '/api/push/subscribe'  && post)                     return await handlePushSubscribe(request, env);
+  if (path === '/api/push/unsubscribe'&& post)                     return await handlePushUnsubscribe(request, env);
+  if (path === '/api/note'            && post)                     return await handleNote(request, env);
+  if (path === '/api/notes'           && request.method === 'GET') return await handleNotesList(request, env);
+  if (path === '/api/notes'           && del)                      return await handleNoteDelete(request, env, url);
+  return fail(404, 'Unbekannte Route.');
+}
 
 export default {
   async fetch(request, env, ctx) {
@@ -850,29 +921,20 @@ export default {
     const erlaubt = isDownloadSite ? ROUTES_DOWNLOAD : ROUTES_UPLOAD;
     if (!erlaubt.has(path)) return fail(404, 'Unbekannte Route.');
 
-    const post = request.method === 'POST';
-    const del  = request.method === 'DELETE';
+    // Fremde Herkunft? Dann erst die Vorabfrage des Browsers beantworten.
+    const cors = corsKopf(request, path, env);
+    if (request.method === 'OPTIONS') {
+      return cors ? new Response(null, { status: 204, headers: cors })
+                  : fail(405, 'Nicht erlaubt.');
+    }
+
     try {
-      if (path === '/api/status'          && request.method === 'GET') return await handleStatus(request, env);
-      if (path === '/api/unlock'          && post)                     return await handleUnlock(request, env);
-      if (path === '/api/logout'          && post)                     return handleLogout(request);
-      if (path === '/api/upload/init'     && post)                     return await handleInit(request, env, ctx);
-      if (path === '/api/upload/part'     && request.method === 'PUT') return await handlePart(request, env, url);
-      if (path === '/api/upload/complete' && post)                     return await handleComplete(request, env);
-      if (path === '/api/upload/abort'    && post)                     return await handleAbort(request, env);
-      if (path === '/api/files'           && request.method === 'GET') return await handleList(request, env);
-      if (path === '/api/files'           && del)                      return await handleFileDelete(request, env, url);
-      if (path === '/api/files/download'  && request.method === 'GET') return await handleDownload(request, env, url);
-      if (path === '/api/purge'           && post)                     return await handlePurge(request, env);
-      if (path === '/api/push/subscribe'  && post)                     return await handlePushSubscribe(request, env);
-      if (path === '/api/push/unsubscribe'&& post)                     return await handlePushUnsubscribe(request, env);
-      if (path === '/api/note'            && post)                     return await handleNote(request, env);
-      if (path === '/api/notes'           && request.method === 'GET') return await handleNotesList(request, env);
-      if (path === '/api/notes'           && del)                      return await handleNoteDelete(request, env, url);
-      return fail(404, 'Unbekannte Route.');
+      return mitCors(await verteilen(path, request, env, ctx, url), cors);
     } catch (err) {
       console.error(path, err?.stack || err);
-      return fail(500, 'Serverfehler.');
+      // Auch der Fehler braucht die Kopfzeilen, sonst sieht die fremde Seite
+      // statt „Serverfehler“ nur einen nichtssagenden CORS-Abbruch.
+      return mitCors(fail(500, 'Serverfehler.'), cors);
     }
   },
 

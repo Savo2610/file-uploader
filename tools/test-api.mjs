@@ -685,6 +685,61 @@ check('nur Texte',
 check('der Name der neuesten Datei ist die Vorschau',
   meldung(['neu.txt', 'alt.txt'], 0).text === 'neu.txt');
 
+console.log('\nZugriff von veerka.mp aus (CORS)');
+
+// Die Kachel auf veerka.mp wirft direkt aus ihrem Dialog ein. Erlaubt sein
+// darf dabei genau der Weg zum Einwerfen – und keiner zurück.
+const vorab = (pfad, herkunft, methode = 'POST', base = UP) =>
+  fetch(base + pfad, {
+    method: 'OPTIONS',
+    headers: {
+      Origin: herkunft,
+      'Access-Control-Request-Method': methode,
+      'Access-Control-Request-Headers': 'content-type',
+    },
+  });
+
+const initVorab = await vorab('/api/upload/init', 'https://veerka.mp');
+check('die Vorabfrage von veerka.mp wird beantwortet',
+  initVorab.headers.get('access-control-allow-origin') === 'https://veerka.mp',
+  `HTTP ${initVorab.status}, ${initVorab.headers.get('access-control-allow-origin')}`);
+check('das Teilstück darf per PUT kommen',
+  (initVorab.headers.get('access-control-allow-methods') || '').includes('PUT'));
+check('ein Sitzungstoken nützt von fremd nichts',
+  !(initVorab.headers.get('access-control-allow-headers') || '').toLowerCase().includes('authorization'),
+  initVorab.headers.get('access-control-allow-headers'));
+check('die Antwort ist als herkunftsabhängig gekennzeichnet',
+  (initVorab.headers.get('vary') || '').toLowerCase().includes('origin'),
+  initVorab.headers.get('vary'));
+
+const fremdVorab = await vorab('/api/upload/init', 'https://boese.example');
+check('eine fremde Seite bekommt die Erlaubnis nicht',
+  !fremdVorab.headers.get('access-control-allow-origin'),
+  fremdVorab.headers.get('access-control-allow-origin'));
+
+const statusCors = await fetch(UP + '/api/status', { headers: { Origin: 'https://veerka.mp' } });
+check('auch die echte Antwort trägt die Erlaubnis',
+  statusCors.headers.get('access-control-allow-origin') === 'https://veerka.mp');
+
+const unlockVorab = await vorab('/api/unlock', 'https://veerka.mp');
+check('freischalten geht von veerka.mp aus nicht',
+  !unlockVorab.headers.get('access-control-allow-origin'),
+  unlockVorab.headers.get('access-control-allow-origin'));
+
+const dateienVorab = await vorab('/api/files', 'https://veerka.mp', 'GET', DL);
+check('die Abhol-Adresse gibt gar nichts nach fremd heraus',
+  !dateienVorab.headers.get('access-control-allow-origin'),
+  dateienVorab.headers.get('access-control-allow-origin'));
+
+const einwurfCors = await fetch(UP + '/api/note', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json', Origin: 'https://veerka.mp' },
+  body: JSON.stringify({ text: TEST_PREFIX + 'aus dem Dialog auf veerka.mp' }),
+});
+check('ein Text aus dem Dialog kommt an',
+  einwurfCors.ok && einwurfCors.headers.get('access-control-allow-origin') === 'https://veerka.mp',
+  'HTTP ' + einwurfCors.status);
+
 console.log('\nTageskontingent');
 
 const statusNow = await (await fetch(UP + '/api/status')).json();

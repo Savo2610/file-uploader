@@ -230,6 +230,34 @@ gestartet wurde – im normalen Safari-Tab existiert `Notification` schlicht
 nicht. Steht die Seite dort nicht, zeigt der Fuß statt des Schalters den
 Hinweis, sie hinzuzufügen.
 
+## Einwerfen von veerka.mp aus
+
+Die Upload-Kachel auf veerka.mp öffnet einen kleinen Briefkasten gleich im
+Dialog, statt hierher zu schicken. Der Code dafür liegt drüben in
+`public/upload.js`; er ruft von dort dieselben drei Schritte auf wie die Seite
+hier. Ein iframe schied aus – die Seite steht auf `X-Frame-Options: DENY`.
+
+Damit der Browser das darf, geben genau diese Routen ihre Antworten nach
+`https://veerka.mp` und `https://www.veerka.mp` heraus:
+
+    /api/status  /api/note
+    /api/upload/init  /api/upload/part  /api/upload/complete  /api/upload/abort
+
+Mehr wird dadurch nicht möglich: anonym einwerfen darf ohnehin jeder, der die
+Seite aufruft, und jede Grenze prüft weiterhin der Worker. `/api/unlock` steht
+bewusst **nicht** auf der Liste, und `Authorization` nicht bei den erlaubten
+Kopfzeilen – ein Sitzungstoken für 10 GB entsteht also nur hier. Von veerka.mp
+aus gilt immer das anonyme Limit.
+
+Beim lokalen Entwickeln liegt die andere Seite auf einem localhost-Port. Von
+allein erkennen lässt sich das nicht: `wrangler dev` setzt Host und
+`request.url` fest auf die erste Route. Deshalb steht die Adresse in
+`.dev.vars`, einer Datei, die es in Produktion nicht gibt:
+
+```
+DEV_HERKUNFT=http://localhost:8787
+```
+
 ## Limits
 
 |                        | ohne Code | mit 2FA-Code |
@@ -322,7 +350,8 @@ npx wrangler secret put VAPID_PRIVATE
 ```
 
 Für lokale Tests dieselben zwei Werte in eine `.dev.vars` legen – die Datei
-steht in `.gitignore` und gehört nirgendwo anders hin.
+steht in `.gitignore` und gehört nirgendwo anders hin. Dorthin gehört auch
+`DEV_HERKUNFT`, siehe oben.
 
 Ist `TOTP_SECRET` nicht gesetzt, verschwindet der Freischalt-Knopf und es
 bleibt beim 50-MB-Limit.
