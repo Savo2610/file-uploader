@@ -791,7 +791,9 @@ async function purgeOld(env) {
 // Erlaubt wird damit nichts Neues: anonym einwerfen darf ohnehin jeder, der
 // diese Seite aufruft, und jede Grenze prüft weiterhin der Worker. CORS regelt
 // allein, von welcher Seite aus der Browser die Antwort auslesen darf.
-const CORS_HERKUNFT = new Set(['https://veerka.mp', 'https://www.veerka.mp']);
+// beta.veerka.mp ist der Testbetrieb des Skiportfolios, das die Rohrpost mit
+// demselben Fenster zum Einwerfen fuehrt.
+const CORS_HERKUNFT = new Set(['https://veerka.mp', 'https://www.veerka.mp', 'https://beta.veerka.mp']);
 
 // Bewusst nur der Weg zum Einwerfen. /api/unlock steht nicht dabei: ein
 // Sitzungstoken für das 10-GB-Limit soll nur auf dieser Seite entstehen, nicht
