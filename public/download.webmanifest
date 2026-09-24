@@ -8,8 +8,8 @@
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#0f0e0c",
-  "theme_color": "#0f0e0c",
+  "background_color": "#a9d4fa",
+  "theme_color": "#5fa8f0",
   "icons": [
     { "src": "/icons/abholen-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/icons/abholen-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },

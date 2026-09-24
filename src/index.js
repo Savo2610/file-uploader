@@ -851,8 +851,10 @@ const ROUTES_DOWNLOAD = new Set([
   '/api/push/subscribe', '/api/push/unsubscribe',
 ]);
 
-// Statische Dateien, die es unter beiden Adressen gibt.
-const gemeinsam = path => path === '/style.css' || path.startsWith('/favicon');
+// Statische Dateien, die es unter beiden Adressen gibt – dazu gehört die
+// 3D-Rohrpost samt der mitgelieferten three.js-Bibliothek.
+const gemeinsam = path => path === '/style.css' || path.startsWith('/favicon')
+  || path === '/rohrpost.js' || path.startsWith('/vendor/');
 
 // Zubehör der Abhol-App: Manifest, Symbole, Service Worker, QR-Code. Gehört nur
 // unter die Abhol-Adresse – dort wird die App installiert, nicht auf der

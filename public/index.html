@@ -4,7 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Dateien senden</title>
-  <meta name="theme-color" content="#0f0e0c">
+  <meta name="theme-color" content="#5fa8f0" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0a1430" media="(prefers-color-scheme: dark)">
   <!-- Persönlicher Upload-Briefkasten – hat in Suchmaschinen nichts verloren. -->
   <meta name="robots" content="noindex, nofollow">
   <!-- Favicon inline, spart eine 404-Anfrage bei jedem Seitenaufruf. -->
@@ -13,45 +14,62 @@
        gstatic – ohne das zweite preconnect wartet der Browser zweimal. -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400..700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 
 <div class="container">
   <header>
-    <p class="eyebrow">Dateiübertragung</p>
-    <h1>Dateien <em>senden</em></h1>
-    <p class="subtitle">Hier kannst du mir Dateien, Fotos, Videos oder Dokumente<br>direkt zukommen lassen.</p>
+    <p class="eyebrow">
+      <svg viewBox="0 0 44 24" aria-hidden="true"><rect x="7" y="4" width="30" height="16" rx="8" fill="#ff6b5a"/><rect x="18" y="4" width="6" height="16" fill="#fff" opacity=".9"/><rect x="2" y="7" width="7" height="10" rx="4" fill="#e6edf5"/><rect x="35" y="7" width="7" height="10" rx="4" fill="#e6edf5"/></svg>
+      Persönliche Rohrpost
+    </p>
+    <h1>Ab in die <em>Röhre</em>!</h1>
+    <p class="subtitle">Fotos, Videos, Dokumente oder ein paar Zeilen Text – rein damit, abschicken, und es landet direkt bei mir.</p>
   </header>
 
-  <div class="dropzone" id="dropzone">
-    <input type="file" id="file-input" multiple aria-label="Dateien auswählen" />
-    <svg class="drop-icon" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
-      <path d="M24 4L24 32M24 4L16 12M24 4L32 12" stroke="#c9a84c" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
-      <path d="M8 36V40C8 41.1 8.9 42 10 42H38C39.1 42 40 41.1 40 40V36" stroke="#c9a84c" stroke-width="1.5" stroke-linecap="round"/>
-    </svg>
-    <p class="drop-label"><strong>Dateien auswählen</strong> oder hierher ziehen</p>
-    <p class="drop-hint" id="drop-hint">Alle Dateitypen</p>
+  <div class="karte" id="karte">
+    <div class="dropzone" id="dropzone">
+      <input type="file" id="file-input" multiple aria-label="Dateien auswählen" />
+      <svg class="drop-icon" viewBox="0 0 64 56" aria-hidden="true">
+        <g class="blatt blatt-l"><rect x="6" y="10" width="30" height="38" rx="6" fill="#a78bfa" transform="rotate(-8 21 48)"/></g>
+        <g class="blatt blatt-r"><rect x="28" y="10" width="30" height="38" rx="6" fill="#3fc7a4" transform="rotate(8 43 48)"/></g>
+        <g class="blatt blatt-m">
+          <rect x="17" y="4" width="30" height="44" rx="6" fill="#fff" stroke="#24457a" stroke-opacity=".15"/>
+          <circle cx="26" cy="16" r="4" fill="#ffc63d"/>
+          <path d="M20 40l8-10 6 6 4-4 7 8z" fill="#4a90e2"/>
+        </g>
+      </svg>
+      <p class="drop-label"><strong>Dateien auswählen</strong> oder hierher ziehen</p>
+      <p class="drop-hint" id="drop-hint">Alle Dateitypen</p>
+    </div>
+
+    <div id="preview-grid"></div>
+
+    <div class="note-area">
+      <textarea class="note-input" id="note-input"
+                placeholder="… oder Text und Links hier reinschreiben"
+                aria-label="Text oder Links einfügen"></textarea>
+      <p class="note-count" id="note-count"></p>
+    </div>
   </div>
 
-  <div id="preview-grid"></div>
+  <!-- Hier steht die 3D-Station der Rohrpost. Der Platz bleibt leer, bis
+       rohrpost.js läuft – ohne WebGL fällt er ganz weg. -->
+  <div class="station" id="station" aria-hidden="true"></div>
 
-  <div class="note-area">
-    <textarea class="note-input" id="note-input"
-              placeholder="… oder Text und Links hier einfügen"
-              aria-label="Text oder Links einfügen"></textarea>
-    <p class="note-count" id="note-count"></p>
-  </div>
+  <button class="upload-btn" id="upload-btn" disabled>
+    <span id="upload-text">Abschicken</span>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h13"/><path d="M12 6l6 6-6 6"/><path d="M2 8h3M1 16h4" opacity=".5"/></svg>
+  </button>
 
   <div id="progress-area"></div>
 
-  <button class="upload-btn" id="upload-btn" disabled>Senden</button>
-
   <div class="pw-area">
     <button class="pw-toggle" id="pw-toggle" type="button">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="3" y="11" width="18" height="11" rx="2"/>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="11" width="18" height="11" rx="3"/>
         <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
       </svg>
       Größeres Limit freischalten (bis 10 GB)
@@ -63,7 +81,7 @@
       <button class="pw-submit" id="code-submit" type="button">Freischalten</button>
     </div>
     <div class="pw-badge" id="pw-badge">
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><polyline points="20 6 9 17 4 12"/></svg>
       10 GB Limit aktiv
     </div>
     <p class="limit-info" id="limit-info">Limit wird geladen…</p>
@@ -99,10 +117,33 @@
   const noteInput    = document.getElementById('note-input');
   const noteCount    = document.getElementById('note-count');
 
+  const uploadText   = document.getElementById('upload-text');
+
+  // Die 3D-Rohrpost ist reine Zugabe: sie lädt nachträglich, und scheitert sie
+  // (kein WebGL, „Bewegung reduzieren“), bleibt rohr einfach null.
+  let rohr = null;
+  let sendet = false;
+  import('/rohrpost.js')
+    .then(m => m.starteRohrpost({
+      modus: 'senden',
+      station: document.getElementById('station'),
+      karte: document.getElementById('karte'),
+    }))
+    .then(r => {
+      if (!r) return;
+      rohr = r;
+      document.documentElement.classList.add('mit-rohr');
+      refreshSendButton();
+    })
+    .catch(err => console.warn('Rohrpost bleibt aus:', err));
+
   // Der Senden-Knopf gilt für beides: ausgewählte Dateien und eingefügten Text.
-  const refreshSendButton = () => {
-    uploadBtn.disabled = selected.length === 0 && !noteInput.value.trim();
-  };
+  // Solange etwas bereitliegt, bietet die Station eine leere Kapsel an.
+  function refreshSendButton() {
+    const etwasDa = selected.length > 0 || Boolean(noteInput.value.trim());
+    uploadBtn.disabled = sendet || !etwasDa;
+    rohr?.bereit(etwasDa && !sendet);
+  }
 
   const authHeaders = () => (session ? { Authorization: 'Bearer ' + session } : {});
 
@@ -217,13 +258,14 @@
   // ── Dateien auswählen ──────────────────────────────────────────────────────
 
   let dragDepth = 0;
-  dropzone.addEventListener('dragenter', e => { e.preventDefault(); if (++dragDepth === 1) dropzone.classList.add('dragover'); });
+  dropzone.addEventListener('dragenter', e => { e.preventDefault(); if (++dragDepth === 1) { dropzone.classList.add('dragover'); rohr?.hunger(true); } });
   dropzone.addEventListener('dragover',  e => e.preventDefault());
-  dropzone.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; dropzone.classList.remove('dragover'); } });
+  dropzone.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; dropzone.classList.remove('dragover'); rohr?.hunger(false); } });
   dropzone.addEventListener('drop', e => {
     e.preventDefault();
     dragDepth = 0;
     dropzone.classList.remove('dragover');
+    rohr?.hunger(false);
     addFiles([...e.dataTransfer.files]);
   });
   fileInput.addEventListener('change', () => addFiles([...fileInput.files]));
@@ -278,10 +320,13 @@
   // Jede Bildvorschau belegt über URL.createObjectURL Speicher, den der Browser
   // erst beim revokeObjectURL wieder freigibt.
   let previewUrls = [];
+  // Welche Kachel zu welcher Datei gehört – die fliegt beim Senden in die Kapsel.
+  let kachelVon = new Map();
 
   function renderPreviews() {
     previewUrls.forEach(URL.revokeObjectURL);
     previewUrls = [];
+    kachelVon = new Map();
     previewGrid.textContent = '';
 
     selected.forEach(file => {
@@ -324,6 +369,7 @@
 
       wrap.append(thumb, label);
       previewGrid.appendChild(wrap);
+      kachelVon.set(file, wrap);
     });
   }
 
@@ -333,7 +379,9 @@
     const note = noteInput.value.trim();
     if (!selected.length && !note) return;
 
-    uploadBtn.disabled = true;
+    sendet = true;
+    refreshSendButton();
+    uploadText.textContent = 'Rohrpost läuft …';
     progressArea.style.display = 'block';
     progressArea.textContent = '';
 
@@ -341,12 +389,15 @@
     // langen Datei-Upload immer noch nicht abgeschickt.
     let noteFailed = false;
     if (note) {
+      const kapsel = rohr?.sendung({ quelle: noteInput });
       try {
         await api('/api/note', { text: note });
         noteInput.value = '';
         noteCount.textContent = '';
+        kapsel?.fertig();
       } catch (err) {
         noteFailed = true;
+        kapsel?.fehler();
         showToast(err.message, 'error');
       }
     }
@@ -355,9 +406,12 @@
     // reicht, statt alles neu heraussuchen zu müssen.
     const failed = [];
     for (const file of selected) {
-      if (!(await uploadFile(file))) failed.push(file);
+      const kapsel = rohr?.sendung({ quelle: kachelVon.get(file) });
+      if (!(await uploadFile(file, kapsel))) failed.push(file);
     }
 
+    sendet = false;
+    uploadText.textContent = 'Abschicken';
     selected = failed;
     fileInput.value = '';
     renderPreviews();
@@ -366,7 +420,8 @@
     if (failed.length) {
       showToast(`${failed.length} Datei(en) nicht angekommen – nochmal senden?`, 'error');
     } else if (!noteFailed) {
-      showToast('Alles angekommen!', 'success');
+      rohr?.geschafft();
+      showToast('Alles angekommen! 🎉', 'success');
     }
 
     loadStatus();
@@ -403,7 +458,8 @@
     return { status, bar };
   }
 
-  async function uploadFile(file) {
+  // kapsel ist die Sendung in der 3D-Rohrpost (oder undefined ohne sie).
+  async function uploadFile(file, kapsel) {
     const { status, bar } = progressRow(file);
     let ticket = null;
 
@@ -430,6 +486,7 @@
         const pct  = file.size ? Math.min(100, (sent / file.size) * 100) : 100;
         bar.style.width = pct + '%';
         status.textContent = Math.floor(pct) + ' %';
+        kapsel?.fortschritt(pct / 100);
       };
 
       let next = 0;
@@ -456,13 +513,15 @@
       status.textContent = '✓ Angekommen';
       status.className = 'progress-status status-done';
       bar.style.width = '100%';
-      bar.style.background = 'var(--success)';
+      bar.style.background = 'var(--minze)';
+      kapsel?.fertig();
       return true;
     } catch (err) {
       status.textContent = '✗ Fehler';
       status.className = 'progress-status status-error';
       status.title = err?.message || String(err);
       console.error(file.name, err);
+      kapsel?.fehler();
 
       // Angefangenen Upload aufräumen, damit er kein Kontingent blockiert.
       if (ticket) api('/api/upload/abort', { upload: ticket }).catch(() => {});

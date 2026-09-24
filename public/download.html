@@ -4,7 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Dateien abholen</title>
-  <meta name="theme-color" content="#0f0e0c">
+  <meta name="theme-color" content="#5fa8f0" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0a1430" media="(prefers-color-scheme: dark)">
   <meta name="robots" content="noindex, nofollow">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%93%A5%3C/text%3E%3C/svg%3E">
 
@@ -20,59 +21,74 @@
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400..700&family=Nunito:wght@400;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/style.css">
   <style>
     /* Vor dem Freischalten ist hier nichts als das Codefeld. */
-    .gate { animation: fadeUp 0.8s 0.15s ease both; }
+    .gate { padding: 1.1rem; }
     .gate .pw-form { display: flex; margin-top: 0; }
-    .gate-hint { text-align: center; font-size: 0.75rem; color: var(--muted); opacity: 0.6; margin-top: 0.8rem; }
+    .gate-hint { text-align: center; font-size: 0.82rem; color: var(--leise); margin-top: 0.8rem; }
     #inhalt { display: none; }
     #inhalt.visible { display: block; }
-    .files { display: block; }
+    .files { display: block; padding: 0.9rem 1rem 0.6rem; }
+    .files + .files { margin-top: 0.9rem; }
+    .files-dateien { --punkt: #4a90e2; }
+    .files-texte { --punkt: #ffc63d; }
 
     /* Abmelden und Benachrichtigungen gehören ins Kleingedruckte: gebraucht
        werden sie selten, erreichbar müssen sie sein – das Sitzungs-Cookie etwa
        kann die Seite selbst gar nicht löschen. */
     .fuss-knopf {
       background: none; border: 0; padding: 0;
-      color: var(--muted); font: inherit; font-size: inherit;
+      color: inherit; font: inherit; font-size: inherit; font-weight: 700;
       text-decoration: underline; text-underline-offset: 3px;
-      cursor: pointer; opacity: 0.8;
+      text-decoration-color: var(--gestrichelt);
+      cursor: pointer;
     }
-    .fuss-knopf:hover { color: var(--gold); }
+    .fuss-knopf:hover { color: var(--blau); }
     .fuss-knopf:disabled { cursor: default; text-decoration: none; }
     #footer .trenner { opacity: 0.4; margin: 0 0.5rem; }
 
     /* Die beiden Sammelknöpfe über den Listen. */
-    .alles { margin-bottom: 1.8rem; animation: fadeUp 0.5s ease both; }
+    .alles { margin-bottom: 1rem; animation: reinfallen 0.5s cubic-bezier(.2,1.4,.4,1) both; }
     .alles-knoepfe { display: flex; gap: 0.6rem; flex-wrap: wrap; }
     .alles-knoepfe .pw-submit { flex: 1; min-width: 11rem; }
+    #alles-laden { background: var(--gelb); color: #231a02; border-color: transparent; box-shadow: 0 4px 0 var(--gelb-tief); }
+    #alles-laden:hover:not(:disabled) { color: #231a02; box-shadow: 0 5px 0 var(--gelb-tief); }
+    #alles-laden:active:not(:disabled) { box-shadow: 0 0 0 var(--gelb-tief); }
 
     /* „Alles löschen“ trägt die Warnfarbe erst beim Anfassen: sichtbar
        gefährlich, aber nicht dauernd rot blinkend neben dem Normalfall. */
-    .alles-weg { color: var(--muted); }
-    .alles-weg:hover { border-color: var(--error); color: var(--error); background: #1f1917; }
+    .alles-weg { color: var(--tinte-2); }
+    .alles-weg:hover:not(:disabled) { color: var(--fehler); }
 
     .alles-status {
-      margin-top: 0.7rem; min-height: 1.1rem;
-      font-size: 0.72rem; color: var(--muted);
+      margin-top: 0.6rem; min-height: 1.1rem;
+      padding: 0 0.6rem;
+      font-size: 0.8rem; color: var(--tinte-2);
       overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
     }
-    .alles-status.fertig { color: var(--success); }
-    .alles-status.fehler { color: var(--error); }
+    .alles-status:empty { display: none; }
+    .alles-status.fertig { color: var(--minze); }
+    .alles-status.fehler { color: var(--fehler); }
   </style>
 </head>
 <body>
 
 <div class="container">
   <header>
-    <p class="eyebrow">Privater Bereich</p>
-    <h1>Dateien <em>abholen</em></h1>
-    <p class="subtitle" id="untertitel">Code aus der Authenticator-App eingeben.</p>
+    <p class="eyebrow">
+      <svg viewBox="0 0 44 24" aria-hidden="true"><rect x="7" y="4" width="30" height="16" rx="8" fill="#3fc7a4"/><rect x="18" y="4" width="6" height="16" fill="#fff" opacity=".9"/><rect x="2" y="7" width="7" height="10" rx="4" fill="#e6edf5"/><rect x="35" y="7" width="7" height="10" rx="4" fill="#e6edf5"/></svg>
+      Privater Bereich
+    </p>
+    <h1>Post <em>abholen</em></h1>
+    <p class="subtitle" id="untertitel">Code aus der Authenticator-App eingeben, dann dreht sich das Ventil auf.</p>
   </header>
 
-  <div class="gate" id="gate">
+  <!-- Die 3D-Station der Rohrpost; bleibt ohne WebGL einfach weg. -->
+  <div class="station" id="station" aria-hidden="true"></div>
+
+  <div class="gate karte" id="gate">
     <div class="pw-form open">
       <input class="pw-input code-input" id="code-input" type="text" inputmode="numeric"
              autocomplete="one-time-code" maxlength="6" placeholder="000000"
@@ -91,12 +107,12 @@
       <p class="alles-status" id="alles-status"></p>
     </div>
 
-    <section class="files">
+    <section class="files files-texte karte">
       <h2>Texte &amp; Links</h2>
       <div id="notes-list"></div>
     </section>
 
-    <section class="files">
+    <section class="files files-dateien karte">
       <h2>Dateien</h2>
       <div id="files-list"></div>
     </section>
@@ -130,6 +146,20 @@
   // dafür gibt es unten „abmelden“, und genau deshalb bleibt der 2FA-Code der
   // einzige Weg, überhaupt einen zu bekommen.
   const SPEICHER = 'download-session';
+
+  // Die 3D-Rohrpost lädt nachträglich und darf fehlen – alles hier fragt sie
+  // über dieses Versprechen an, das im schlechtesten Fall zu null wird.
+  const rohrpost = import('/rohrpost.js')
+    .then(m => m.starteRohrpost({
+      modus: 'empfangen',
+      station: document.getElementById('station'),
+      karte: document.querySelector('.container'),
+    }))
+    .then(r => {
+      if (r) document.documentElement.classList.add('mit-rohr');
+      return r;
+    })
+    .catch(err => { console.warn('Rohrpost bleibt aus:', err); return null; });
 
   let session = localStorage.getItem(SPEICHER) || null;
   let limits  = null;
@@ -227,8 +257,10 @@
     zeigeQr();
     zeigeAbmelden();
     zeigePush();
-    loadFiles();
-    loadNotes();
+    rohrpost.then(r => r?.ventil(true));
+    // Für jedes Stück, das da ist, kommt eine Kapsel durch die Röhre.
+    Promise.all([loadFiles(), loadNotes()]).then(() =>
+      rohrpost.then(r => r?.ankunft(bestand.files.length + bestand.notes.length)));
   }
 
   // Hängt einen Textknopf ans Kleingedruckte im Fuß.
@@ -681,6 +713,7 @@
     document.getElementById('abmelden-box')?.remove();
     document.getElementById('push-box')?.remove();
     document.getElementById('qr-overlay').classList.remove('offen');
+    rohrpost.then(r => r?.ventil(false));
     showToast('Sitzung abgelaufen – bitte neuen Code eingeben', 'error');
   }
 

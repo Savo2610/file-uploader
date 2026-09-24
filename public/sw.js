@@ -11,11 +11,14 @@
 // Antworten blieben auf dem Gerät liegen, auch nachdem die Sitzung abgelaufen
 // oder die Datei gelöscht ist.
 
-const CACHE = 'abholen-v1';
+const CACHE = 'abholen-v2';
 
 const GERUEST = [
   '/',
   '/style.css',
+  '/rohrpost.js',
+  '/vendor/three.module.min.js',
+  '/vendor/three.core.min.js',
   '/icons/abholen-192.png',
   '/icons/abholen-512.png',
 ];
