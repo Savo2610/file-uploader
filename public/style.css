@@ -204,19 +204,20 @@ h1 em::after {
 
 /* ── Ablage ───────────────────────────────────────────────────────────────── */
 
+/* Die Ablage hat keinen eigenen Kasten: sie ist einfach die obere Hälfte der
+   Karte. Erst wenn etwas darübergezogen wird, zeigt sie ihren Rand. */
 .dropzone {
   position: relative;
-  border: 2px dashed var(--gestrichelt);
+  border: 2px dashed transparent;
   border-radius: calc(var(--rund) - 8px);
-  padding: 1.8rem 1.25rem 1.6rem;
+  padding: 1.5rem 1.25rem 1.3rem;
   text-align: center;
   cursor: pointer;
   transition: border-color 0.2s, background 0.2s, transform 0.25s cubic-bezier(.2,1.6,.4,1);
 }
-.dropzone:hover { border-color: var(--blau); background: rgba(255, 255, 255, 0.18); }
+.dropzone:hover { background: rgba(255, 255, 255, 0.16); }
 .dropzone.dragover {
   border-color: var(--blau);
-  border-style: solid;
   background: rgba(47, 122, 212, 0.12);
   transform: scale(1.02);
 }
@@ -328,13 +329,19 @@ h1 em::after {
 
 /* ── Textfeld ─────────────────────────────────────────────────────────────── */
 
-.note-area { margin-top: 0.85rem; }
+/* Auch das Textfeld ist kein eigener Kasten, sondern der untere Teil
+   der Karte – abgetrennt nur durch eine gestrichelte Linie. */
+.note-area {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 2px dashed var(--linie);
+}
 .note-input {
   display: block;
   width: 100%;
-  min-height: 88px;
+  min-height: 76px;
   resize: vertical;
-  background: rgba(255, 255, 255, 0.34);
+  background: transparent;
   border: 2px solid transparent;
   border-radius: calc(var(--rund) - 10px);
   color: var(--tinte);
@@ -345,8 +352,8 @@ h1 em::after {
   outline: none;
   transition: border-color 0.2s, background 0.2s;
 }
-@media (prefers-color-scheme: dark) { .note-input { background: rgba(10, 20, 50, 0.35); } }
-.note-input:focus { border-color: var(--blau); background: var(--glas-dicht); }
+.note-input:hover { background: rgba(255, 255, 255, 0.12); }
+.note-input:focus { background: rgba(255, 255, 255, 0.22); }
 .note-input::placeholder { color: var(--leise); }
 .note-count { font-size: 0.72rem; color: var(--leise); text-align: right; margin-top: 0.3rem; min-height: 0; }
 .note-count:empty { display: none; }
@@ -363,19 +370,17 @@ h1 em::after {
 
 /* ── Fortschritt ──────────────────────────────────────────────────────────── */
 
-#progress-area { margin-top: 1rem; display: none; }
+/* Alle Uploads stehen gemeinsam in einer Karte, nicht jeder in seiner. */
+#progress-area { margin-top: 1.1rem; display: none; padding: 0.35rem 1rem; }
+#progress-area:empty { display: none !important; }
 
 .progress-file {
   display: flex; align-items: center; gap: 0.75rem;
-  padding: 0.55rem 0.85rem;
-  margin-top: 0.45rem;
-  border-radius: 16px;
-  background: var(--glas);
-  border: 1px solid var(--glas-rand);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  padding: 0.6rem 0;
+  border-bottom: 1px dashed var(--linie);
   animation: reinfallen 0.4s cubic-bezier(.2,1.4,.4,1) both;
 }
+.progress-file:last-child { border-bottom: 0; }
 .progress-file-name { flex: 1; font-size: 0.85rem; color: var(--tinte-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .progress-status { font-family: var(--anzeige); font-weight: 500; font-size: 0.82rem; min-width: 76px; text-align: right; }
 .status-uploading { color: var(--blau); }
@@ -515,6 +520,28 @@ button.upload-btn:focus-visible { outline: 3px solid var(--blau); outline-offset
   animation: reinfallen 0.4s cubic-bezier(.2,1.5,.4,1) both;
 }
 .pw-badge.visible { display: flex; }
+
+/* Nach dem Freischalten: das Abzeichen wird aufgestempelt … */
+.turbo .pw-badge.visible {
+  background: linear-gradient(120deg, #7c4dff, #b18cff);
+  color: #fff;
+  box-shadow: 0 6px 18px -6px rgba(124, 77, 255, 0.7);
+  transform: rotate(-2deg);
+  animation: stempeln 0.7s 0.9s cubic-bezier(.2,1.6,.4,1) both;
+}
+/* … und über den gelben Knopf läuft ab und zu ein Glanz. */
+.turbo button.upload-btn { overflow: hidden; }
+.turbo button.upload-btn::after {
+  content: '';
+  position: absolute;
+  inset: -20% auto -20% -40%;
+  width: 30%;
+  background: linear-gradient(100deg, transparent, rgba(255, 255, 255, 0.75), transparent);
+  transform: skewX(-18deg);
+  animation: glanz 3.6s 1.6s ease-in-out infinite;
+  pointer-events: none;
+}
+.turbo button.upload-btn:disabled::after { display: none; }
 
 .limit-info { margin-top: 0.5rem; text-align: center; font-size: 0.78rem; color: var(--leise); }
 .limit-info span { color: var(--tinte-2); font-weight: 700; }
@@ -694,6 +721,15 @@ footer {
   25% { transform: rotate(-4deg) scale(1.06); }
   55% { transform: rotate(3deg); }
   80% { transform: rotate(-1deg); }
+}
+@keyframes stempeln {
+  0%   { opacity: 0; transform: scale(2.6) rotate(-14deg); }
+  60%  { opacity: 1; transform: scale(0.92) rotate(-1deg); }
+  100% { opacity: 1; transform: scale(1) rotate(-2deg); }
+}
+@keyframes glanz {
+  0%, 55% { left: -40%; }
+  100%    { left: 130%; }
 }
 @keyframes stroemen { to { background-position: 17px 0, 0 0; } }
 @keyframes shake {

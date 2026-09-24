@@ -219,7 +219,9 @@ function baueStation(neigung) {
   sockelRing.position.y = -56;
   g.add(sockel, sockelRing);
 
-  const rumpf = new THREE.Mesh(new THREE.CylinderGeometry(34, 38, 74, 56), stoff.koralle);
+  // Eigener Lack je Station: nach dem Freischalten wird er umlackiert.
+  const lack = stoff.koralle.clone();
+  const rumpf = new THREE.Mesh(new THREE.CylinderGeometry(34, 38, 74, 56), lack);
   rumpf.position.y = -19;
   g.add(rumpf);
   for (const [y, r] of [[12, 34.4], [-48, 37.6]]) {
@@ -295,7 +297,7 @@ function baueStation(neigung) {
   schein.position.copy(birne.position);
   g.add(stiel, birne, kappe, schein);
 
-  g.userData = { trichter, nadel, lampenStoff, schein, rumpf };
+  g.userData = { trichter, nadel, lampenStoff, schein, rumpf, lack };
   return g;
 }
 
@@ -427,7 +429,7 @@ export async function starteRohrpost({ modus = 'senden', station: platz, karte }
   station.add(baueSchatten());
   szene.add(station);
 
-  const { trichter, nadel, lampenStoff, schein } = station.userData;
+  const { trichter, nadel, lampenStoff, schein, lack: stationsLack } = station.userData;
   const ACHSE = new THREE.Vector3(0, Math.cos(NEIGUNG), Math.sin(NEIGUNG));
   const MUND = new THREE.Vector3(0, TRICHTER_Y, 0).addScaledVector(ACHSE, 34);
   const amMund = d => MUND.clone().addScaledVector(ACHSE, d);
@@ -562,6 +564,7 @@ export async function starteRohrpost({ modus = 'senden', station: platz, karte }
     station.scale.setScalar(massstab);
     stationBodenY = -p.unten + 4 * massstab;
     station.position.set(p.links + p.b / 2, stationBodenY + 72 * massstab, 0);
+    station.userData.mitteX = station.position.x;
     station.updateMatrixWorld(true);
 
     const seitenBreite = document.documentElement.clientWidth;
@@ -674,9 +677,9 @@ export async function starteRohrpost({ modus = 'senden', station: platz, karte }
     }
   }
 
-  function konfetti(welt, anzahl = 36) {
+  function konfetti(welt, anzahl = 36, farben = FARBEN) {
     for (let i = 0; i < anzahl; i++) {
-      const m = new THREE.Mesh(form.schnipsel, new THREE.MeshStandardMaterial({ color: FARBEN[i % FARBEN.length], roughness: 0.5, side: THREE.DoubleSide }));
+      const m = new THREE.Mesh(form.schnipsel, new THREE.MeshStandardMaterial({ color: farben[i % farben.length], roughness: 0.4, metalness: farben === FARBEN ? 0 : 0.6, side: THREE.DoubleSide }));
       m.position.copy(welt);
       m.scale.setScalar(zufall(4, 7) * massstab);
       const v = new THREE.Vector3(zufall(-1, 1), zufall(0.9, 2.2), zufall(-0.4, 1)).normalize().multiplyScalar(zufall(320, 620));
@@ -837,6 +840,7 @@ export async function starteRohrpost({ modus = 'senden', station: platz, karte }
     hunger:  [0x9fd0ff, 0x2f8cff, 1.8],
     zu:      [0xff8a7a, 0xd9261a, 1.1],
     offen:   [0x9ff5d2, 0x19c98f, 0.9],
+    turbo:   [0xffe7a3, 0xffb400, 0.8],
   };
   let lampenBlitz = null;        // { art, bis }
   let hunger = false;
@@ -849,7 +853,7 @@ export async function starteRohrpost({ modus = 'senden', station: platz, karte }
   const trichterWippe = new Feder(0, 300, 10);
 
   function lampenTick() {
-    let art = senden ? 'aus' : (ventilOffen ? 'offen' : 'zu');
+    let art = senden ? (turboAn ? 'turbo' : 'aus') : (ventilOffen ? 'offen' : 'zu');
     let blinken = false;
     if (senden && (slot?.sendung || warteschlange.length)) { art = 'arbeit'; blinken = true; }
     if (hunger) { art = 'hunger'; blinken = true; }
@@ -861,6 +865,14 @@ export async function starteRohrpost({ modus = 'senden', station: platz, karte }
     lampenStoff.emissiveIntensity = staerke * an;
     schein.color.set(glut);
     schein.intensity = staerke * an * 2500 * massstab;
+
+    // Beim Aufladen des Turbos läuft die Lampe einmal durch den Regenbogen.
+    if (turbo?.phase === 'laden') {
+      lampenStoff.emissive.setHSL((uhr * 1.6) % 1, 1, 0.55);
+      lampenStoff.emissiveIntensity = 2.4;
+      schein.color.copy(lampenStoff.emissive);
+      schein.intensity = 5000 * massstab;
+    }
   }
 
   function stationTick(dt) {
@@ -868,7 +880,8 @@ export async function starteRohrpost({ modus = 'senden', station: platz, karte }
     // Das Manometer wackelt ein wenig – Druckleitungen sind nie ganz ruhig.
     druck.ziel = slot?.sendung ? 0.08 + slot.sendung.p * 0.92 : 0;
     druck.schritt(dt);
-    nadel.rotation.z = 2.2 - druck.x * 4.4 + Math.sin(uhr * 31) * 0.02 * (slot?.sendung ? 1 : 0);
+    if (turbo?.phase === 'laden') druck.ziel = 1.08;
+    nadel.rotation.z = 2.2 - druck.x * 4.4 + Math.sin(uhr * 31) * 0.02 * (slot?.sendung || turbo ? 1 : 0);
 
     wippe.schritt(dt);
     trichterWippe.ziel = hunger ? 0.08 + Math.sin(uhr * 9) * 0.05 : 0;
@@ -887,9 +900,160 @@ export async function starteRohrpost({ modus = 'senden', station: platz, karte }
       rad.rotation.z += ((ventil.userData.ziel ?? 0) - rad.rotation.z) * Math.min(1, dt * 3.2);
     }
 
+    turboTick(dt);
     lampenTick();
     if (senden) sendeTick(dt);
     else empfangsTick(dt);
+  }
+
+  // ── Turbo: was nach dem Freischalten des großen Limits passiert ────────
+  //
+  // Die Nadel schlägt bis zum Anschlag aus, die Station zittert und dampft,
+  // die Lampe läuft durch alle Farben – dann ein goldener Knall: die Station
+  // ist umlackiert, ein Lichtring jagt durch die ganze Röhre, und drei
+  // Sterne kreisen fortan um sie herum.
+
+  const LACK_NORMAL = new THREE.Color(0xff6b5a);
+  const LACK_TURBO  = new THREE.Color(0x7c4dff);
+  const GOLD        = new THREE.Color(0xffc63d);
+  const GLAS_TON    = new THREE.Color(0xc4ecff);
+  const GOLDFARBEN  = [0xffc63d, 0xffe08a, 0xf0a818, 0xfff3c4, 0x7c4dff];
+
+  let turboAn = false;
+  let turbo = null;               // laufende Animation: { t, phase }
+  let glasGlut = 0;               // 0 … 1: wie golden die Röhre gerade leuchtet
+  const turboSterne = [];
+  const lichtRinge = [];
+
+  const sternForm = (() => {
+    const f = new THREE.Shape();
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2 + Math.PI / 2;
+      const r = i % 2 ? 3.2 : 7.5;
+      f[i ? 'lineTo' : 'moveTo'](Math.cos(a) * r, Math.sin(a) * r);
+    }
+    const g = new THREE.ExtrudeGeometry(f, { depth: 2.4, bevelEnabled: true, bevelSize: 0.9, bevelThickness: 0.9, bevelSegments: 2 });
+    g.center();
+    return g;
+  })();
+  const sternStoff = new THREE.MeshStandardMaterial({ color: 0xffd257, metalness: 0.7, roughness: 0.25, emissive: 0xffa800, emissiveIntensity: 0.45 });
+
+  function sterneSetzen(an) {
+    for (const st of turboSterne) st.removeFromParent();
+    turboSterne.length = 0;
+    if (!an) return;
+    for (let i = 0; i < 3; i++) {
+      const st = new THREE.Mesh(sternForm, sternStoff);
+      st.userData.versatz = (i / 3) * Math.PI * 2;
+      st.scale.setScalar(0.001);
+      station.add(st);
+      turboSterne.push(st);
+    }
+  }
+
+  function lichtRing(verzoegerung, staerke) {
+    const m = new THREE.Mesh(
+      new THREE.TorusGeometry(24, 4.5, 12, 40),
+      new THREE.MeshBasicMaterial({ color: 0xffd257, transparent: true, opacity: staerke, blending: THREE.AdditiveBlending, depthWrite: false }),
+    );
+    m.visible = false;
+    szene.add(m);
+    lichtRinge.push({ m, t: -verzoegerung, staerke });
+  }
+
+  function turboTick(dt) {
+    // Die Sterne kreisen auch nach der Animation weiter.
+    for (const st of turboSterne) {
+      const a = uhr * 0.9 + st.userData.versatz;
+      st.position.set(Math.cos(a) * 64, -8 + Math.sin(uhr * 1.4 + st.userData.versatz) * 16, Math.sin(a) * 64);
+      st.rotation.set(0.3, uhr * 2.2 + st.userData.versatz, 0);
+      const ziel = 1;
+      st.scale.setScalar(st.scale.x + (ziel - st.scale.x) * Math.min(1, dt * 6));
+    }
+
+    for (let i = lichtRinge.length - 1; i >= 0; i--) {
+      const r = lichtRinge[i];
+      r.t += dt;
+      if (r.t < 0) continue;
+      const u = easeInOut(r.t / 1.3);
+      if (u >= 1) { r.m.removeFromParent(); r.m.geometry.dispose(); r.m.material.dispose(); lichtRinge.splice(i, 1); continue; }
+      r.m.visible = true;
+      kurve.getPointAt(u, r.m.position);
+      r.m.quaternion.setFromUnitVectors(Z_ACHSE, kurve.getTangentAt(u, tangente));
+      r.m.scale.setScalar(massstab * (0.9 + Math.sin(r.t * 30) * 0.08));
+      r.m.material.opacity = r.staerke * Math.min(1, (1 - u) * 4);
+    }
+
+    glasGlut = Math.max(0, glasGlut - dt * 0.7);
+    if (roehre) {
+      for (const teil of roehre.children) {
+        teil.material.uniforms?.uTon.value.copy(GLAS_TON).lerp(GOLD, glasGlut);
+      }
+    }
+
+    if (!turbo) return;
+    turbo.t += dt;
+    const t = turbo.t;
+
+    if (turbo.phase === 'laden') {
+      // Zittern, das immer stärker wird, und Dampf aus den Seiten.
+      const u = t / 1.1;
+      station.position.x = station.userData.mitteX + Math.sin(t * 70) * 3 * u * massstab;
+      trichterWippe.v += Math.sin(t * 50) * 30 * u * dt;
+      turbo.dampf = (turbo.dampf ?? 0) - dt;
+      if (turbo.dampf <= 0) {
+        turbo.dampf = 0.12;
+        const seite = Math.random() < 0.5 ? -1 : 1;
+        puff(station.localToWorld(new THREE.Vector3(seite * 38, zufall(-40, 0), 10)), 2, false,
+          new THREE.Vector3(seite, 0.4, 0));
+      }
+      if (u >= 1) {
+        turbo.phase = 'knall';
+        turbo.t = 0;
+        station.position.x = station.userData.mitteX;
+        const mund = station.localToWorld(amMund(10));
+        puff(mund, 22);
+        konfetti(mund, 60, GOLDFARBEN);
+        konfetti(station.localToWorld(new THREE.Vector3(0, -20, 30)), 30, GOLDFARBEN);
+        wippe.v -= 3.4;
+        trichterWippe.v += 7;
+        glasGlut = 1;
+        sterneSetzen(true);
+        lichtRing(0, 1);
+        lichtRing(0.07, 0.6);
+        lichtRing(0.14, 0.35);
+        lampenBlitz = { art: 'turbo', bis: uhr + 2 };
+      }
+    } else if (turbo.phase === 'knall') {
+      // Umlackieren mit einem goldenen Aufblitzen.
+      const u = t / 0.7;
+      stationsLack.color.copy(LACK_NORMAL).lerp(LACK_TURBO, easeOut(u));
+      stationsLack.emissive.copy(GOLD);
+      stationsLack.emissiveIntensity = Math.max(0, 1 - u) * 0.9;
+      if (u >= 1) {
+        stationsLack.emissiveIntensity = 0;
+        turbo = null;
+      }
+    }
+  }
+
+  function turboSchalten(an, sofort) {
+    if (an === turboAn) return;
+    turboAn = an;
+    if (!an) {
+      turbo = null;
+      stationsLack.color.copy(LACK_NORMAL);
+      stationsLack.emissiveIntensity = 0;
+      sterneSetzen(false);
+      return;
+    }
+    if (sofort) {
+      stationsLack.color.copy(LACK_TURBO);
+      sterneSetzen(true);
+      for (const st of turboSterne) st.scale.setScalar(1);
+      return;
+    }
+    turbo = { t: 0, phase: 'laden' };
   }
 
   // ── Senden: Kapsel anbieten, befüllen, verschließen, abschießen ──────────
@@ -1179,6 +1343,10 @@ export async function starteRohrpost({ modus = 'senden', station: platz, karte }
 
     // Upload: alles ist durch – Konfetti, sobald die letzte Kapsel weg ist.
     geschafft() { warteschlange.push({ typ: 'jubel' }); },
+
+    // Upload: das große Limit ist frei. sofort: ohne Feuerwerk, etwa wenn die
+    // Seite mit einer noch gültigen Freischaltung neu geladen wird.
+    turbo(an = true, { sofort = false } = {}) { turboSchalten(Boolean(an), sofort); },
 
     // Abholen: das Ventil auf- oder zudrehen.
     ventil(offen) {

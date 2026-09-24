@@ -11,7 +11,7 @@
 // Antworten blieben auf dem Gerät liegen, auch nachdem die Sitzung abgelaufen
 // oder die Datei gelöscht ist.
 
-const CACHE = 'abholen-v2';
+const CACHE = 'abholen-v3';
 
 const GERUEST = [
   '/',

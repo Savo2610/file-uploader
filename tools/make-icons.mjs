@@ -17,11 +17,16 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 const OUT = new URL('../public/icons/', import.meta.url);
 
 // ── Farben ──────────────────────────────────────────────────────────────────
-// Dieselben Töne wie public/style.css.
+// Dieselben Töne wie public/style.css und die Rohrpost in public/rohrpost.js.
 
-const BG    = [0x14, 0x12, 0x0e];
-const GOLD  = [0xc9, 0xa8, 0x4c];
-const RAND  = [0x3a, 0x33, 0x22];
+const HIMMEL_OBEN  = [0x5f, 0xa8, 0xf0];
+const HIMMEL_UNTEN = [0xc4, 0xe4, 0xfc];
+const WEISS   = [0xff, 0xff, 0xff];
+const KANTE   = [0x3d, 0x7f, 0xc4];
+const KORALLE = [0xff, 0x6b, 0x5a];
+const CHROM   = [0xe6, 0xed, 0xf5];
+const GUMMI   = [0x2b, 0x31, 0x50];
+const MESSING = [0xf0, 0xbd, 0x55];
 
 // ── PNG schreiben ───────────────────────────────────────────────────────────
 
@@ -97,17 +102,19 @@ function canvas(size) {
     size,
     data,
     // Malt eine Farbe dort, wo `deckung(x, y)` zwischen 0 und 1 liegt, über das
-    // bisherige Bild (Alpha-Blending, „source over“).
+    // bisherige Bild (Alpha-Blending, „source over“). Die Farbe darf auch eine
+    // Funktion des Ortes sein – für Verläufe.
     paint(color, alpha, deckung) {
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const a = alpha * deckung(x + 0.5, y + 0.5);
           if (a <= 0) continue;
+          const c = typeof color === 'function' ? color(x + 0.5, y + 0.5) : color;
           const i = (y * size + x) * 4;
           const dst = data[i + 3] / 255;
           const out = a + dst * (1 - a);
           for (let k = 0; k < 3; k++) {
-            data[i + k] = Math.round((color[k] * a + data[i + k] * dst * (1 - a)) / out);
+            data[i + k] = Math.round((c[k] * a + data[i + k] * dst * (1 - a)) / out);
           }
           data[i + 3] = Math.round(out * 255);
         }
@@ -120,58 +127,119 @@ function canvas(size) {
 // der Breite eines Pixels weich dazwischen.
 const fill = d => Math.min(1, Math.max(0, 0.5 - d));
 
-/**
- * Das Symbol: ein Pfeil, der in eine offene Schale zeigt – dieselbe Figur wie
- * auf der Upload-Seite, nur andersherum, weil hier abgeholt wird.
- *
- * `scale` ist die Kantenlänge der Figur im Verhältnis zum Bild. Bei maskable
- * schneiden manche Startbildschirme bis zu 20 % ringsum weg, deshalb dort
- * kleiner.
- */
-function glyph(c, scale) {
+const mix = (a, b, t) => a.map((v, k) => v + (b[k] - v) * t);
+
+// Himmel: oben kräftiges Blau, unten fast weiß, links oben ein Sonnenschein.
+function himmel(c, form) {
   const s = c.size;
-  const u = s * scale;              // Kantenlänge der Figur
-  const ox = (s - u) / 2, oy = (s - u) / 2;
-  const P = (x, y) => [ox + x * u, oy + y * u];
-  const w = u * 0.075;              // halbe Strichstärke
-
-  const [ax1, ay1] = P(0.5, 0.06),  [ax2, ay2] = P(0.5, 0.60);
-  const [lx,  ly]  = P(0.28, 0.40), [rx,  ry]  = P(0.72, 0.40);
-  const [tl1, tl2] = P(0.10, 0.62), [tb1, tb2] = P(0.10, 0.92);
-  const [tr1, tr2] = P(0.90, 0.62), [tc1, tc2] = P(0.90, 0.92);
-
-  c.paint(GOLD, 1, (x, y) => fill(Math.min(
-    // Pfeil: Schaft und zwei Schenkel der Spitze.
-    sdSegment(x, y, ax1, ay1, ax2, ay2),
-    sdSegment(x, y, lx, ly, ax2, ay2),
-    sdSegment(x, y, rx, ry, ax2, ay2),
-    // Schale: links herunter, unten herüber, rechts hinauf.
-    sdSegment(x, y, tl1, tl2, tb1, tb2),
-    sdSegment(x, y, tb1, tb2, tc1, tc2),
-    sdSegment(x, y, tc1, tc2, tr1, tr2),
-  ) - w));
+  c.paint((x, y) => mix(HIMMEL_OBEN, HIMMEL_UNTEN, y / s), 1, form);
+  c.paint(WEISS, 0.45, (x, y) => Math.max(0, 1 - Math.hypot(x - s * 0.12, y - s * 0.05) / (s * 0.55)) * form(x, y));
 }
 
-// Das Symbol für den Startbildschirm: abgerundete Kachel mit feiner Kante.
+/**
+ * Das Motiv: eine Rohrpost-Kapsel, die schräg durch eine Glasröhre saust –
+ * dieselbe wie auf den Seiten. `k` ist die Größe der Kapsel im Verhältnis zum
+ * Bild; bei maskable schneiden manche Startbildschirme bis zu 20 % ringsum
+ * weg, deshalb dort kleiner. Die Röhre darf angeschnitten werden.
+ */
+function rohrpost(c, k) {
+  const s = c.size;
+  // Achse der Röhre: schräg von links unten nach rechts oben.
+  const mx = s * 0.5, my = s * 0.53;
+  const len = Math.hypot(1, 0.46);
+  const dx = 1 / len, dy = -0.46 / len;
+  // Längs- (u) und Querkoordinate (v) zur Achse, in Bildgrößen.
+  const uv = (x, y) => {
+    const px = (x - mx) / s, py = (y - my) / s;
+    return [px * dx + py * dy, -px * dy + py * dx];
+  };
+  const R = 0.2 * k / 0.62;         // Innenradius der Röhre
+  const L = 0.3 * k / 0.62;         // halbe Länge der Kapsel
+  const r = 0.125 * k / 0.62;       // Radius der Kapsel
+  const px = 1 / s;                 // ein Pixel in Bildgrößen
+
+  // Glas: fast durchsichtig, zum Rand hin heller.
+  c.paint(WEISS, 1, (x, y) => {
+    const [, v] = uv(x, y);
+    const d = Math.abs(v) / R;
+    return d > 1 ? fill((Math.abs(v) - R) / px) * 0.2 : 0.14 + Math.pow(d, 4) * 0.35;
+  });
+
+  // Fahrtstreifen hinter der Kapsel.
+  for (const [v0, l0, l1] of [[-0.5, -1.55, -1.1], [0.05, -1.85, -1.1], [0.55, -1.45, -1.1]]) {
+    c.paint(WEISS, 0.85, (x, y) => {
+      const [u, v] = uv(x, y);
+      return fill((sdSegment(u, v, l0 * L, v0 * r, l1 * L, v0 * r) - 0.012) / px);
+    });
+  }
+
+  // Die Kapsel: Lack, Chromkappen, weißes Band, zwei Gummiringe.
+  const kapsel = (u, v) => sdSegment(u, v, -L + r, 0, L - r, 0) - r;
+  c.paint(KORALLE, 1, (x, y) => fill(kapsel(...uv(x, y)) / px));
+  c.paint(CHROM, 1, (x, y) => {
+    const [u, v] = uv(x, y);
+    return fill(kapsel(u, v) / px) * fill((L - 0.075 - Math.abs(u)) / px);
+  });
+  c.paint(WEISS, 1, (x, y) => {
+    const [u, v] = uv(x, y);
+    return fill(kapsel(u, v) / px) * fill((Math.abs(u - 0.02) - 0.035) / px);
+  });
+  for (const u0 of [-L * 0.62, L * 0.62]) {
+    c.paint(GUMMI, 1, (x, y) => {
+      const [u, v] = uv(x, y);
+      return fill((sdSegment(u, v, u0, -r - 0.012, u0, r + 0.012) - 0.018) / px);
+    });
+  }
+  // Glanzlicht oben auf der Kapsel.
+  c.paint(WEISS, 0.55, (x, y) => {
+    const [u, v] = uv(x, y);
+    return fill((sdSegment(u, v, -L * 0.45, -r * 0.55, L * 0.3, -r * 0.55) - 0.012) / px);
+  });
+
+  // Röhrenkanten: innen ein Glanzstreifen, außen ein blauer Umriss.
+  c.paint(KANTE, 0.8, (x, y) => {
+    const [, v] = uv(x, y);
+    return fill((Math.abs(Math.abs(v) - R) - 0.012) / px);
+  });
+  c.paint(WEISS, 0.9, (x, y) => {
+    const [, v] = uv(x, y);
+    return fill((Math.abs(v + R * 0.72) - 0.01) / px);
+  });
+
+  // Zwei Messingschellen.
+  for (const u0 of [-0.36, 0.36]) {
+    c.paint(MESSING, 1, (x, y) => {
+      const [u, v] = uv(x, y);
+      return fill((sdSegment(u, v, u0, -R - 0.022, u0, R + 0.022) - 0.017) / px);
+    });
+  }
+}
+
+// Das Symbol für den Startbildschirm: abgerundete Kachel.
 function kachel(size) {
   const c = canvas(size);
   const r = size * 0.22, h = size / 2;
-  c.paint(BG, 1, (x, y) => fill(sdRoundRect(x, y, h, h, h - size * 0.02, h - size * 0.02, r)));
-  // Kante: die Fläche minus die um eine Strichstärke kleinere Fläche.
-  const b = size * 0.012;
-  c.paint(RAND, 1, (x, y) => {
-    const d = sdRoundRect(x, y, h, h, h - size * 0.02, h - size * 0.02, r);
-    return fill(d) - fill(d + b);
-  });
-  glyph(c, 0.56);
+  const form = (x, y) => fill(sdRoundRect(x, y, h, h, h - size * 0.02, h - size * 0.02, r));
+  himmel(c, form);
+  const motiv = canvas(size);
+  rohrpost(motiv, 0.62);
+  // Das Motiv nur innerhalb der Kachel.
+  for (let i = 0; i < size * size; i++) {
+    const x = i % size, y = Math.floor(i / size);
+    motiv.data[i * 4 + 3] = Math.round(motiv.data[i * 4 + 3] * form(x + 0.5, y + 0.5));
+  }
+  c.paint((x, y) => {
+    const i = (Math.floor(y) * size + Math.floor(x)) * 4;
+    return [motiv.data[i], motiv.data[i + 1], motiv.data[i + 2]];
+  }, 1, (x, y) => motiv.data[(Math.floor(y) * size + Math.floor(x)) * 4 + 3] / 255);
   return png(size, size, c.data);
 }
 
-// Maskable: randlos, weil der Startbildschirm selbst zuschneidet.
-function randlos(size, scale) {
+// Maskable und Apple: randlos, weil der Startbildschirm selbst zuschneidet.
+function randlos(size, k) {
   const c = canvas(size);
-  c.paint(BG, 1, () => 1);
-  glyph(c, scale);
+  himmel(c, () => 1);
+  rohrpost(c, k);
   return png(size, size, c.data);
 }
 
@@ -182,10 +250,10 @@ mkdirSync(OUT, { recursive: true });
 const dateien = {
   'abholen-192.png':           kachel(192),
   'abholen-512.png':           kachel(512),
-  'abholen-maskable-192.png':  randlos(192, 0.46),
-  'abholen-maskable-512.png':  randlos(512, 0.46),
-  // iOS legt selbst runde Ecken an und mag kein Transparenz – deshalb randlos.
-  'abholen-apple-180.png':     randlos(180, 0.54),
+  'abholen-maskable-192.png':  randlos(192, 0.5),
+  'abholen-maskable-512.png':  randlos(512, 0.5),
+  // iOS legt selbst runde Ecken an und mag keine Transparenz – deshalb randlos.
+  'abholen-apple-180.png':     randlos(180, 0.6),
 };
 
 for (const [name, buf] of Object.entries(dateien)) {
