@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenYards Monitor</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1c2230;--mut:#6b7385;--line:#e3e6ec;--ok:#1a8f4c;--err:#c8332b;--warn:#b7791f;--acc:#2f5de0;--flash:#fff4c2}
+@media(prefers-color-scheme:dark){:root{--bg:#12151c;--card:#1b2030;--fg:#e6e9f2;--mut:#8b93a7;--line:#2b3247;--ok:#47c27e;--err:#ef6b62;--warn:#e0a94a;--acc:#7b9bff;--flash:#4a4320}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--fg);font:14px/1.45 system-ui,sans-serif}
+header{display:flex;flex-wrap:wrap;gap:10px;align-items:center;padding:12px 16px;background:var(--card);border-bottom:1px solid var(--line);position:sticky;top:0;z-index:2}
+h1{font-size:16px;margin:0 12px 0 0}
+input,select,button{font:inherit;padding:6px 9px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--fg)}
+button{cursor:pointer;background:var(--acc);color:#fff;border-color:var(--acc)}button.sec{background:transparent;color:var(--fg);border-color:var(--line)}
+.mut{color:var(--mut)}main{padding:16px;display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(420px,1fr))}
+@media(max-width:480px){main{grid-template-columns:1fr;padding:12px 16px}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;min-width:0}
+.card.flash{animation:fl 1.6s}@keyframes fl{from{background:var(--flash)}to{background:var(--card)}}
+.ch{display:flex;gap:8px;align-items:center;padding:9px 12px;border-bottom:1px solid var(--line)}
+.ch b{flex:1}.pill{font-size:11px;padding:1px 7px;border-radius:99px;border:1px solid currentColor}
+.ok{color:var(--ok)}.err{color:var(--err)}.warn{color:var(--warn)}
+.cb{padding:8px 12px;max-height:300px;overflow:auto}
+table{border-collapse:collapse;width:100%;font-size:13px}th,td{text-align:left;padding:3px 8px 3px 0;border-bottom:1px solid var(--line);vertical-align:top;word-break:break-word}th{color:var(--mut);font-weight:500;white-space:nowrap}
+details{margin-top:6px}summary{cursor:pointer;color:var(--mut);font-size:12px}pre{margin:6px 0 0;font-size:12px;white-space:pre-wrap;word-break:break-all}
+.wide{grid-column:1/-1}.msg{color:var(--err)}
+</style>
+</head>
+<body>
+<header>
+  <h1>OpenYards Monitor</h1>
+  <form id="login" style="display:flex;gap:6px;flex-wrap:wrap">
+    <input id="u" placeholder="Benutzer" autocomplete="username" required>
+    <input id="p" type="password" placeholder="Passwort" autocomplete="current-password" required>
+    <button>Anmelden</button>
+  </form>
+  <span id="who" class="mut" hidden></span>
+  <select id="game" hidden></select><select id="profile" hidden></select>
+  <button id="go" hidden>Überwachen</button><button id="stop" class="sec" hidden>Stopp</button>
+  <label class="mut" hidden id="ivl">Takt schnell/langsam (s)
+    <input id="fast" type="number" min="5" style="width:60px"> <input id="slow" type="number" min="5" style="width:60px">
+  </label>
+  <span id="msg" class="msg"></span>
+</header>
+<main id="cards"></main>
+<main><section class="card wide"><div class="ch"><b>Request-Log</b><span class="mut">letzte 80</span></div>
+<div class="cb" style="max-height:260px"><table id="log"></table></div></section></main>
+<script>
+const $=id=>document.getElementById(id);
+const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const api=async(p,b)=>{const r=await fetch(p,b?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}:{});return{ok:r.ok,data:await r.json().catch(()=>null)}};
+const TITLES={map_positions:'Kartenpositionen',game_events:'Spiel-Events',last_position:'Letzte Position',game_info:'Spielinfo',messages:'Nachrichten',move_options:'Bewegungsoptionen',mrx_views:'Mr.-X-Sichtungen',mrx_live_views:'Mr.-X live',mrx_next_update:'Nächstes Mr.-X-Update',catchable_mrx:'Fangbare Mr. X',group_evaluations:'Gruppenauswertung',logs:'Logs'};
+const scalar=v=>v===null?'<span class=mut>–</span>':typeof v==='object'?'<span class=mut>{…}</span>':esc(v);
+function render(d){
+  if(d==null)return'<span class=mut>keine Daten</span>';
+  if(Array.isArray(d)){
+    if(!d.length)return'<span class=mut>leer</span>';
+    if(typeof d[0]==='object'&&d[0]){const cols=[...new Set(d.slice(0,50).flatMap(o=>Object.keys(o||{})))].slice(0,8);
+      return`<div class=mut>${d.length} Einträge</div><table><tr>${cols.map(c=>`<th>${esc(c)}</th>`).join('')}</tr>${d.slice(0,100).map(o=>`<tr>${cols.map(c=>`<td>${scalar(o?.[c])}</td>`).join('')}</tr>`).join('')}</table>`}
+    return d.map(scalar).join(', ')}
+  if(typeof d==='object')return`<table>${Object.entries(d).map(([k,v])=>`<tr><th>${esc(k)}</th><td>${typeof v==='object'&&v?render(v):scalar(v)}</td></tr>`).join('')}</table>`;
+  return esc(d)}
+const ago=s=>s<2?'jetzt':s<90?Math.round(s)+' s':Math.round(s/60)+' min';
+const prevChanged={};
+function paint(st){
+  const names=Object.keys(st.endpoints);
+  $('cards').innerHTML=names.map(n=>{const e=st.endpoints[n];const ok=e.status===200;
+    const fl=prevChanged[n]&&prevChanged[n]!==e.changed;prevChanged[n]=e.changed;
+    return`<section class="card${fl?' flash':''}"><div class=ch><b>${TITLES[n]||n}</b>
+      <span class="pill ${ok?'ok':'err'}">${e.status||'ERR'}</span><span class=mut>${e.ms} ms</span></div>
+      <div class=cb>${ok?render(e.data):`<span class=err>${esc(JSON.stringify(e.error))}</span>`}
+      <details><summary>Roh-JSON</summary><pre>${esc(JSON.stringify(e.data,null,1)||'')}</pre></details></div>
+      <div class=ch style="border:0;border-top:1px solid var(--line)"><span class=mut style="font-size:12px">${esc(e.path)}</span><b></b>
+      <span class=mut style="font-size:12px">abgefragt ${ago(st.now-e.ts)} · geändert ${ago(st.now-e.changed)} · ${e.calls}×</span></div></section>`}).join('');
+  $('log').innerHTML='<tr><th>Zeit</th><th>Endpunkt</th><th>Status</th><th>ms</th></tr>'+st.log.map(l=>`<tr><td>${new Date(l.ts*1e3).toLocaleTimeString()}</td><td>${esc(l.path)}</td><td class="${l.status===200?'ok':'err'}">${l.status}</td><td>${l.ms}</td></tr>`).join('')}
+async function tick(){const{data:st}=await api('/api/state');if(!st)return;
+  $('login').hidden=!!st.user;$('who').hidden=!st.user;$('who').textContent='angemeldet: '+st.user;
+  ['game','profile','go','ivl'].forEach(i=>$(i).hidden=!st.user);$('stop').hidden=!st.selection;
+  if(document.activeElement!==$('fast')&&document.activeElement!==$('slow')){$('fast').value=st.intervals.fast;$('slow').value=st.intervals.slow}
+  if(st.user&&!$('game').options.length)loadGames();
+  paint(st)}
+async function loadGames(){const{ok,data}=await api('/api/games');if(!ok)return;
+  const list=data.results||data;$('game').innerHTML=list.map(g=>`<option value="${g.id}">${esc(g.name||g.title||'Spiel '+g.id)}</option>`).join('');loadProfiles()}
+async function loadProfiles(){const{ok,data}=await api('/api/profiles?gameId='+$('game').value);if(!ok)return;
+  const list=data.results||data;$('profile').innerHTML=list.map(p=>`<option value="${p.id}">${esc(p.name||p.username||p.nickname||'Profil '+p.id)}</option>`).join('')}
+$('game').onchange=loadProfiles;
+$('login').onsubmit=async e=>{e.preventDefault();$('msg').textContent='';const r=await api('/api/login',{username:$('u').value,password:$('p').value});$('p').value='';if(!r.ok)$('msg').textContent='Login fehlgeschlagen';tick()};
+$('go').onclick=async()=>{await api('/api/select',{gameId:$('game').value,profileId:$('profile').value});tick()};
+$('stop').onclick=async()=>{await api('/api/stop',{});$('cards').innerHTML='';tick()};
+[$('fast'),$('slow')].forEach(i=>i.onchange=()=>api('/api/intervals',{fast:+$('fast').value,slow:+$('slow').value}));
+tick();setInterval(tick,2000);
+</script>
+</body>
+</html>
