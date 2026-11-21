@@ -34,9 +34,21 @@ const LIMITS = {
   // liegen lässt, braucht wieder einen Code.
   renewBelow: 0.5,
 
-  // Fehlversuche bei der Freischaltung, bevor die IP für eine Stunde gesperrt
-  // wird. Ohne das ließen sich 6 Stellen in überschaubarer Zeit durchprobieren.
+  // Fehlversuche bei der Freischaltung, bevor ein Netz für eine Stunde
+  // gesperrt wird. Ohne das ließen sich 6 Stellen in überschaubarer Zeit
+  // durchprobieren. Gezählt wird nicht die einzelne Adresse, sondern das Netz
+  // dahinter, siehe netz().
   maxAuthFailuresPerHour: 10,
+
+  // Fehlversuche von allen zusammen in 24 Stunden. Die Sperre pro Netz allein
+  // hält niemanden auf, der genug Netze hat. Jeder Versuch trifft 3 von einer
+  // Million Codes (das aktuelle Fenster und seine Nachbarn); bei 30 am Tag
+  // bräuchte es im Mittel rund 30 Jahre.
+  //
+  // Der Preis: wer es darauf anlegt, sperrt auch das Freischalten für einen
+  // Tag. Die Abhol-Seite bleibt bis zu 30 Tage angemeldet und merkt davon
+  // nichts – gesperrt wäre nur das Freischalten an einem neuen Gerät.
+  maxAuthFailuresPerDay: 30,
 
   // Eingefügter Text: Länge und Stückzahl pro Tag.
   maxNoteChars: 20_000,
@@ -83,9 +95,14 @@ const fail = (status, message) => json({ error: message }, status);
 
 // Der Dateiname kommt vom Absender und darf nichts anderes werden als ein
 // Name: keine Pfadtrennzeichen, keine Steuerzeichen, keine Ausbrüche nach oben.
-function safeFileName(raw) {
+//
+// Zu den Steuerzeichen zählen auch die unsichtbaren aus Unicode (Kategorie Cf
+// und die Zeilentrenner). Allen voran U+202E: es dreht die Leserichtung um, und
+// aus „urlaub‮gnp.command“ wird in der Liste „urlaubdnammoc.png“ – angezeigt
+// als Bild, in Wahrheit ein Skript.
+export function safeFileName(raw) {
   const name = String(raw ?? '')
-    .replace(/[\x00-\x1f\x7f]/g, '')  // Steuerzeichen
+    .replace(/[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu, '')  // Steuerzeichen, auch unsichtbare
     .replace(/[\\/]/g, '_')           // Pfadtrennzeichen
     .replace(/\.{2,}/g, '.')          // kein ".." mehr, auch nicht in der Mitte
     .replace(/^[.\s_]+/, '')          // nichts Verstecktes am Anfang
@@ -105,6 +122,25 @@ function objectKey(fileName) {
 }
 
 const clientIp = request => request.headers.get('CF-Connecting-IP') || 'unbekannt';
+
+// Das Netz hinter einer Adresse, wie es die Brute-Force-Sperre zählt. Bei IPv4
+// ist das die Adresse selbst. Bei IPv6 bekommt schon ein einzelner Anschluss
+// oder ein billiger Server meist ein ganzes /64 – das sind 2^64 Adressen, und
+// jede hätte sonst ihre eigenen zehn Versuche.
+export function netz(ip) {
+  if (!ip.includes(':')) return ip;
+
+  const v4 = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+  if (v4) return v4[1];
+
+  // „::“ steht für eine Lücke aus Nullgruppen, die erst aufgefüllt werden
+  // muss, bevor sich die ersten vier Gruppen abzählen lassen.
+  const [vorn, hinten] = ip.toLowerCase().split('::');
+  const a = vorn ? vorn.split(':') : [];
+  const b = hinten ? hinten.split(':') : [];
+  const gruppen = hinten === undefined ? a : [...a, ...Array(Math.max(0, 8 - a.length - b.length)).fill('0'), ...b];
+  return gruppen.slice(0, 4).map(g => g.padStart(4, '0')).join(':') + '::/64';
+}
 
 // ── Berechtigung ────────────────────────────────────────────────────────────
 
@@ -276,16 +312,22 @@ async function handleUnlock(request, env) {
     return fail(503, 'Zwei-Faktor-Anmeldung ist auf dem Server nicht eingerichtet.');
   }
 
-  const ip = clientIp(request);
+  // In auth_attempts steht das Netz, nicht die einzelne Adresse.
+  const ip = netz(clientIp(request));
   const now = Date.now();
 
-  const failures = await env.DB
-    .prepare('SELECT COUNT(*) AS n FROM auth_attempts WHERE ip = ? AND ok = 0 AND at > ?')
-    .bind(ip, now - HOUR_MS)
-    .first();
+  const [proNetz, insgesamt] = await env.DB.batch([
+    env.DB.prepare('SELECT COUNT(*) AS n FROM auth_attempts WHERE ip = ? AND ok = 0 AND at > ?')
+      .bind(ip, now - HOUR_MS),
+    env.DB.prepare('SELECT COUNT(*) AS n FROM auth_attempts WHERE ok = 0 AND at > ?')
+      .bind(now - DAY_MS),
+  ]);
 
-  if ((failures?.n ?? 0) >= LIMITS.maxAuthFailuresPerHour) {
+  if ((proNetz.results?.[0]?.n ?? 0) >= LIMITS.maxAuthFailuresPerHour) {
     return fail(429, 'Zu viele Fehlversuche. Bitte in einer Stunde erneut probieren.');
+  }
+  if ((insgesamt.results?.[0]?.n ?? 0) >= LIMITS.maxAuthFailuresPerDay) {
+    return fail(429, 'Zu viele Fehlversuche. Freischalten ist bis morgen gesperrt.');
   }
 
   let body;

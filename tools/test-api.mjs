@@ -197,6 +197,25 @@ check('das Cookie für die Download-Links hält genauso lange',
 
 const langToken = langBody.token;
 
+// Die Sperre über alle Netze zusammen. Dafür braucht es Fehlversuche aus
+// vielen Netzen, die sich nur lokal direkt in die Datenbank schreiben lassen.
+if (UP.includes('localhost')) {
+  const { execFileSync } = await import('node:child_process');
+  const d1 = sql => execFileSync('npx', [
+    'wrangler', 'd1', 'execute', 'upload-meta', '--local', '--command', sql,
+  ], { cwd: new URL('..', import.meta.url).pathname, stdio: 'ignore' });
+
+  const jetzt = Date.now();
+  d1('INSERT INTO auth_attempts (ip, ok, at) VALUES '
+    + Array.from({ length: 30 }, (_, i) => `('2001:db8:${i}::/64', 0, ${jetzt})`).join(', '));
+
+  const gesperrt = await post('/api/unlock', { code: totp(vars.TOTP_SECRET) });
+  check('nach 30 Fehlversuchen aus fremden Netzen ist Freischalten gesperrt, auch mit richtigem Code',
+    gesperrt.status === 429, 'HTTP ' + gesperrt.status);
+
+  d1('DELETE FROM auth_attempts; DELETE FROM totp_used');
+}
+
 const langStatus = await (await fetch(DL + '/api/status', {
   headers: { Authorization: 'Bearer ' + langToken },
 })).json();
@@ -315,6 +334,16 @@ const listAfter = await (await fetch(DL + '/api/files', {
 const stored = listAfter.files.find(f => f.name.includes('img src'));
 check('gespeicherter Schlüssel enthält kein ..',
   Boolean(stored) && !stored.key.includes('..'), stored?.key);
+
+// U+202E dreht die Leserichtung: angezeigt würde „urlaubdnammoc.png“.
+const verdreht = await upload(Buffer.from('x'), 'urlaub‮gnp​.command');
+const listVerdreht = await (await fetch(DL + '/api/files', {
+  headers: { Authorization: 'Bearer ' + token },
+})).json();
+const ankunft = listVerdreht.files.find(f => f.name.includes('urlaub'));
+check('unsichtbare Unicode-Steuerzeichen fliegen aus dem Namen',
+  verdreht.failedAt === null && ankunft?.name === TEST_PREFIX + 'urlaubgnp.command',
+  JSON.stringify(ankunft?.name));
 
 console.log('\nText und Links');
 
